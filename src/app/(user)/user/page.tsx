@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import { ThemeToggleButton } from "@/components/common/ThemeToggleButton";
 
 type Activity = {
@@ -17,13 +17,15 @@ export default function UserCustodialDemo() {
 }
 
 function PageContent() {
+  // Demo balances
   const [rmBalance, setRmBalance] = useState<number>(1500);
   const [oumgBalance, setOumgBalance] = useState<number>(1.2);
 
+  // Two-way inputs
   const [grams, setGrams] = useState<string>("");
   const [ringgit, setRinggit] = useState<string>("");
 
-  // 自动联动计算
+  // Sync helpers
   const syncByGrams = (g: string) => {
     setGrams(g);
     const val = Number(g);
@@ -38,11 +40,32 @@ function PageContent() {
   const cost = Number(ringgit) || 0;
   const g = Number(grams) || 0;
 
+  // Minting flow
   const [minting, setMinting] = useState<"idle" | "processing" | "success">("idle");
   const [step, setStep] = useState<0 | 1 | 2 | 3>(0);
   const [fakeHash, setFakeHash] = useState<string | null>(null);
 
-  const [activity, setActivity] = useState<Activity[]>([]);
+  // Activity feed
+  const [activity, setActivity] = useState<Activity[]>([
+    {
+      id: "ACT-1003",
+      type: "Credit",
+      detail: "Admin credited RM 1,000",
+      when: "2025-09-20 13:10",
+    },
+    {
+      id: "ACT-1002",
+      type: "Purchase",
+      detail: "Bought 0.5 g OUMG (RM 250)",
+      when: "2025-09-19 17:40",
+    },
+    {
+      id: "ACT-1001",
+      type: "Mint",
+      detail: "Minted 0.5 g to your wallet",
+      when: "2025-09-19 17:40",
+    },
+  ]);
 
   const canBuy = g > 0 && cost > 0 && rmBalance >= cost && minting !== "processing";
 
@@ -51,10 +74,13 @@ function PageContent() {
     setMinting("processing");
     setStep(1);
 
+    // Step 1
     setTimeout(() => {
       setStep(2);
+      // Step 2
       setTimeout(() => {
         setStep(3);
+        // Step 3
         setTimeout(() => {
           setRmBalance((v) => Number((v - cost).toFixed(2)));
           setOumgBalance((v) => Number((v + g).toFixed(4)));
@@ -96,6 +122,16 @@ function PageContent() {
     setRinggit("");
   };
 
+  // Projected balances (for Wallet Info)
+  const projectedRm = useMemo(
+    () => (canBuy ? Number((rmBalance - cost).toFixed(2)) : rmBalance),
+    [canBuy, rmBalance, cost]
+  );
+  const projectedG = useMemo(
+    () => (canBuy ? Number((oumgBalance + g).toFixed(4)) : oumgBalance),
+    [canBuy, oumgBalance, g]
+  );
+
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-900 px-6 py-8">
       {/* Header */}
@@ -111,7 +147,7 @@ function PageContent() {
         <ThemeToggleButton />
       </div>
 
-      {/* Balance */}
+      {/* Balances */}
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2 mb-8">
         <BalanceCard label="RM Credits" value={`RM ${rmBalance}`} color="brand" />
         <BalanceCard label="OUMG Balance" value={`${oumgBalance} g`} color="emerald" />
@@ -150,9 +186,11 @@ function PageContent() {
             disabled={!canBuy}
             onClick={startBuyAndMint}
             className={`rounded-lg px-4 py-2 text-sm font-semibold shadow-theme-xs
-              ${canBuy
-                ? "bg-emerald-600 text-white hover:bg-emerald-700"
-                : "bg-gray-300 text-gray-500 cursor-not-allowed"}
+              ${
+                canBuy
+                  ? "bg-emerald-600 text-white hover:bg-emerald-700"
+                  : "bg-gray-300 text-gray-500 cursor-not-allowed"
+              }
             `}
           >
             {minting === "processing" ? "Processing…" : "Buy & Mint"}
@@ -173,35 +211,117 @@ function PageContent() {
               </>
             )}
             {minting === "success" && (
-              <div>
-                <div className="text-sm font-semibold text-emerald-600 dark:text-emerald-400">
-                  ✅ Minting Success
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <div className="text-sm font-semibold text-emerald-600 dark:text-emerald-400">
+                    ✅ Minting Success
+                  </div>
+                  <div className="text-xs text-gray-500 dark:text-gray-400">
+                    Tx Hash: {fakeHash?.slice(0, 20)}… (demo)
+                  </div>
                 </div>
-                <div className="text-xs text-gray-500 dark:text-gray-400">
-                  Tx Hash: {fakeHash?.slice(0, 20)}… (demo)
+                <div className="flex gap-2">
+                  <button
+                    onClick={resetFlow}
+                    className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-sm font-medium text-gray-700 shadow-theme-xs hover:bg-gray-50 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-200 dark:hover:bg-white/5"
+                  >
+                    Close
+                  </button>
+                  <a
+                    href="#wallet-info"
+                    className="rounded-lg border border-blue-300 bg-blue-500/10 px-3 py-1.5 text-sm font-semibold text-blue-700 shadow-theme-xs hover:bg-blue-500/15 dark:border-blue-800 dark:text-blue-400"
+                    onClick={() =>
+                      setTimeout(() => window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" }), 50)
+                    }
+                  >
+                    View Info
+                  </a>
                 </div>
-                <button onClick={resetFlow} className="mt-3 rounded-lg border px-3 py-1 text-sm">
-                  Close
-                </button>
               </div>
             )}
           </div>
         )}
       </div>
 
-      {/* Activity */}
-      <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-theme-lg dark:border-gray-800 dark:bg-gray-900">
-        <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-4">Recent Activity</h2>
-        <ul className="space-y-2">
-          {activity.length === 0 && (
-            <li className="text-xs text-gray-500 dark:text-gray-400">No activity yet.</li>
+      {/* Activity + Wallet Info */}
+      <div id="wallet-info" className="grid grid-cols-1 gap-4 md:gap-6 xl:grid-cols-12">
+        {/* Activity */}
+        <div className="xl:col-span-7 rounded-2xl border border-gray-200 bg-white shadow-theme-lg dark:border-gray-800 dark:bg-gray-900">
+          <div className="px-5 py-4 border-b border-gray-200 dark:border-gray-800">
+            <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-300">Recent Activity</h2>
+          </div>
+          <ul className="p-5 space-y-3">
+            {activity.length === 0 && (
+              <li className="text-xs text-gray-500 dark:text-gray-400">No activity yet.</li>
+            )}
+            {activity.map((a) => (
+              <li key={a.id} className="flex items-start gap-3 rounded-xl border border-gray-200 p-3 dark:border-gray-800">
+                <span
+                  className={`mt-0.5 inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium ${
+                    a.type === "Credit"
+                      ? "border-blue-300 bg-blue-500/10 text-blue-700 dark:border-blue-800 dark:text-blue-400"
+                      : a.type === "Purchase"
+                      ? "border-emerald-300 bg-emerald-500/10 text-emerald-700 dark:border-emerald-800 dark:text-emerald-400"
+                      : "border-purple-300 bg-purple-500/10 text-purple-700 dark:border-purple-800 dark:text-purple-400"
+                  }`}
+                >
+                  {a.type}
+                </span>
+                <div className="flex-1">
+                  <div className="text-sm text-gray-800 dark:text-gray-200">{a.detail}</div>
+                  <div className="text-xs text-gray-500 dark:text-gray-400">{a.when}</div>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
+
+        {/* Wallet Info */}
+        <div className="xl:col-span-5 rounded-2xl border border-gray-200 bg-white p-5 shadow-theme-lg dark:border-gray-800 dark:bg-gray-900">
+          <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-300">Wallet Info</h2>
+          <dl className="mt-3 grid grid-cols-1 gap-x-6 gap-y-2 text-sm sm:grid-cols-2">
+            <div>
+              <dt className="text-gray-500 dark:text-gray-400">Account Type</dt>
+              <dd className="font-medium text-gray-800 dark:text-gray-100">Custodial (demo)</dd>
+            </div>
+            <div>
+              <dt className="text-gray-500 dark:text-gray-400">Price (MYR / g)</dt>
+              <dd className="font-medium text-gray-800 dark:text-gray-100">RM {PRICE_MYR_PER_G}</dd>
+            </div>
+            <div>
+              <dt className="text-gray-500 dark:text-gray-400">RM Credits</dt>
+              <dd className="font-medium text-gray-800 dark:text-gray-100">RM {rmBalance}</dd>
+            </div>
+            <div>
+              <dt className="text-gray-500 dark:text-gray-400">OUMG</dt>
+              <dd className="font-medium text-gray-800 dark:text-gray-100">{oumgBalance} g</dd>
+            </div>
+          </dl>
+
+          {/* Projected after this purchase (only when canBuy) */}
+          {canBuy && (
+            <div className="mt-4 rounded-xl border border-gray-200 p-4 text-sm dark:border-gray-800">
+              <div className="font-semibold text-gray-800 dark:text-gray-200 mb-2">Projected After Purchase</div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <div className="text-gray-500 dark:text-gray-400">RM Credits</div>
+                  <div className="font-medium text-gray-800 dark:text-gray-100">RM {projectedRm}</div>
+                </div>
+                <div>
+                  <div className="text-gray-500 dark:text-gray-400">OUMG</div>
+                  <div className="font-medium text-gray-800 dark:text-gray-100">{projectedG} g</div>
+                </div>
+              </div>
+              <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
+                Based on current inputs (RM {cost || 0} → {g || 0} g).
+              </p>
+            </div>
           )}
-          {activity.map((a) => (
-            <li key={a.id} className="text-sm text-gray-800 dark:text-gray-200">
-              {a.when} — {a.detail}
-            </li>
-          ))}
-        </ul>
+
+          <p className="mt-4 text-xs text-gray-500 dark:text-gray-400">
+            This is a product demo. No real blockchain interaction happens here.
+          </p>
+        </div>
       </div>
     </div>
   );
