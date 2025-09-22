@@ -11,7 +11,7 @@ import {
   GridIcon,
   HorizontaLDots,
   // ListIcon,
-  PageIcon,
+  // PageIcon,
   PieChartIcon,
   PlugInIcon,
   // TableIcon,
