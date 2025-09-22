@@ -99,7 +99,7 @@ export default function Dashboard() {
 
   // Simple sparkline (no external lib) -> returns width % based on ratio
   const ratio = (num: number, max: number) => (max <= 0 ? 0 : Math.min(100, Math.round((num / max) * 100)));
-  const maxSpent = Math.max(...users.map(u => u.rmSpent), 1);
+  // const maxSpent = Math.max(...users.map(u => u.rmSpent), 1);
   const maxOumg = Math.max(...users.map(u => u.oumgPurchased), 1);
 
   return (
