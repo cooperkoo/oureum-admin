@@ -9,20 +9,21 @@ import {
   saveAdminSession,
   clearAdminSession,
   readAdminSession,
-  requestMetaMaskAddress,
-  API_BASE,
+  requestMetaMaskAddress, // ✅ reuse helper from lib
 } from "@/lib/adminAuth";
+
+const API_BASE = process.env.NEXT_PUBLIC_API_BASE?.replace(/\/+$/, "") || "";
 
 /**
  * Admin Sign-In (explicit-only):
- * - No auto-verify; only runs when user clicks the button.
- * - Uses window.ethereum directly (no WalletConnect / SDK).
- * - Shows a clear warning if NEXT_PUBLIC_API_BASE is not set.
+ * - DOES NOT auto-verify based on wallet connection.
+ * - Only verifies when user clicks the button.
+ * - Uses window.ethereum directly via helper (no RainbowKit / MetaMask SDK).
  */
 export default function SignInForm() {
   const router = useRouter();
   const [checking, setChecking] = React.useState(false);
-  const [error, setError] = React.useState<string>("");
+  const [error, setError] = React.useState("");
 
   // If already logged in, go Dashboard
   React.useEffect(() => {
@@ -30,39 +31,40 @@ export default function SignInForm() {
     if (isAdmin) router.replace("/");
   }, [router]);
 
-  async function handleSignIn() {
+  const handleSignIn = async () => {
     setError("");
-    try {
-      if (!API_BASE) {
-        throw new Error(
-          "Backend API base is not configured. Please set NEXT_PUBLIC_API_BASE."
-        );
-      }
 
+    // Quick pre-check: require API base so backend verification can run
+    if (!API_BASE) {
+      setError(
+        "Backend URL is not configured. Please set NEXT_PUBLIC_API_BASE (e.g. http://localhost:4000)."
+      );
+      return;
+    }
+
+    try {
       setChecking(true);
 
       // 1) Ask MetaMask for address explicitly on click
       const addr = await requestMetaMaskAddress();
-      const w = normalizeAddress(addr);
-      if (!w) throw new Error("Invalid wallet address returned by MetaMask.");
+      const normalized = normalizeAddress(addr);
+      if (!normalized) throw new Error("Invalid address returned.");
 
-      // 2) Backend verification via x-admin-wallet header
-      const ok = await isAdminAddress(w);
+      // 2) Backend verification
+      const ok = await isAdminAddress(normalized);
       if (ok) {
-        saveAdminSession(w);
+        saveAdminSession(normalized);
         router.replace("/"); // go dashboard
       } else {
         clearAdminSession();
-        throw new Error("This wallet is not in the admin whitelist.");
+        setError("This wallet is not in the admin whitelist.");
       }
     } catch (e: any) {
       setError(e?.message || "Failed to sign in with MetaMask.");
     } finally {
       setChecking(false);
     }
-  }
-
-  const apiBaseMissing = !API_BASE;
+  };
 
   return (
     <div className="min-h-screen bg-white dark:bg-gray-900 flex">
@@ -78,22 +80,10 @@ export default function SignInForm() {
             </p>
           </div>
 
-          {/* Environment warning if API base is missing */}
-          {apiBaseMissing && (
-            <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-200">
-              <div className="font-semibold">NEXT_PUBLIC_API_BASE is not set</div>
-              <div className="mt-1">
-                Please set <code className="px-1 rounded bg-black/5 dark:bg-white/10">NEXT_PUBLIC_API_BASE</code>
-                &nbsp;(e.g. <code className="px-1 rounded bg-black/5 dark:bg-white/10">http://localhost:4000</code> or
-                &nbsp;<code className="px-1 rounded bg-black/5 dark:bg-white/10">https://api.oureum.com</code>) in your environment.
-              </div>
-            </div>
-          )}
-
-          {/* MetaMask sign-in button */}
+          {/* Clean MetaMask button */}
           <button
             onClick={handleSignIn}
-            disabled={checking || apiBaseMissing}
+            disabled={checking}
             className="w-full rounded-xl px-6 py-3.5 font-semibold text-gray-900 dark:text-white
                        bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700
                        shadow-sm transition-all duration-200
@@ -111,12 +101,18 @@ export default function SignInForm() {
               {error}
             </div>
           )}
+
+          {!API_BASE && (
+            <div className="mt-4 rounded-xl border border-yellow-200 bg-yellow-50 p-3 text-sm text-yellow-800 dark:border-yellow-900/40 dark:bg-yellow-950/30 dark:text-yellow-200">
+              NEXT_PUBLIC_API_BASE is not set. Sign-in will fail until it is configured.
+            </div>
+          )}
         </div>
       </div>
 
       {/* Right decoration area */}
       <div className="hidden lg:flex lg:w-1/2 items-center justify-center p-12 bg-gray-50 dark:bg-gray-900/50">
-        <div className="w-full max-w-md">{/* optional illustration */}</div>
+        <div className="w-full max-w-md">{/* brand/illustration (optional) */}</div>
       </div>
     </div>
   );

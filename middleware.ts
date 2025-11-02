@@ -1,36 +1,75 @@
+// middleware.ts
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
+/**
+ * Server-side gate using a lightweight cookie set on sign-in.
+ * - If not signed in (no "ou_admin=1"), requests to "/" (and other admin pages)
+ *   are rewritten to "/signin" (no visible redirect).
+ * - If signed in and visiting "/signin", rewrite to "/" to avoid seeing the sign-in page again.
+ * - Keeps user subdomain mapping sample (optional).
+ */
 export function middleware(req: NextRequest) {
+  const url = req.nextUrl.clone();
   const host = (req.headers.get("host") || "").toLowerCase();
+  const path = url.pathname;
 
-  // user.<your-domain> → /user
+  // Read cookie written by saveAdminSession()
+  const isAdmin = req.cookies.get("ou_admin")?.value === "1";
+
+  // Optional: subdomain routing examples
   if (host.startsWith("user.")) {
-    const url = req.nextUrl.clone();
-    // 把任何路径都重写到 /user（避免根路径不触发问题）
-    if (!url.pathname.startsWith("/user")) {
+    if (!path.startsWith("/user")) {
       url.pathname = "/user";
       return NextResponse.rewrite(url);
     }
     return NextResponse.next();
   }
 
-  // admin.<your-domain> → /（后台仪表盘）
-  if (host.startsWith("admin.")) {
-    const url = req.nextUrl.clone();
-    if (url.pathname === "/user") {
-      // 防止在 admin 子域误进用户页
-      url.pathname = "/";
-      return NextResponse.rewrite(url);
-    }
-    return NextResponse.next();
+  // For admin.* or main domain we treat "/" as admin dashboard entry.
+  const isAdminHost = host.startsWith("admin.");
+
+  // Public routes that should always pass through
+  const publicPaths = new Set<string>([
+    "/signin",
+  ]);
+
+  const isApi = path.startsWith("/api/");
+  const isPublic = publicPaths.has(path);
+
+  // Never interfere with API/static
+  if (isApi) return NextResponse.next();
+
+  // If signed in and heading to /signin, just show dashboard
+  if (isAdmin && path === "/signin") {
+    url.pathname = "/";
+    return NextResponse.rewrite(url);
   }
 
-  // 其他域名：放行
+  // If not signed in:
+  // - On admin subdomain: rewrite everything except public routes to /signin
+  // - On root domain: at least rewrite "/" to /signin (you can add more paths as needed)
+  if (!isAdmin) {
+    if (isAdminHost) {
+      if (!isPublic) {
+        url.pathname = "/signin";
+        return NextResponse.rewrite(url);
+      }
+    } else {
+      // Root domain rule: land on /signin instead of dashboard flash
+      if (path === "/") {
+        url.pathname = "/signin";
+        return NextResponse.rewrite(url);
+      }
+    }
+  }
+
   return NextResponse.next();
 }
 
-// 让中间件覆盖除静态资源外的大多数路径（更保险）
+// Exclude static assets and Next internals to avoid unnecessary work.
 export const config = {
-  matcher: ["/((?!_next/static|_next/image|favicon.ico|robots.txt|sitemap.xml).*)"],
+  matcher: [
+    "/((?!_next/static|_next/image|favicon.ico|robots.txt|sitemap.xml|assets/).*)",
+  ],
 };
