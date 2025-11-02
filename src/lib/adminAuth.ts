@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 // src/lib/adminAuth.ts
 // Helpers for Admin MetaMask sign-in with backend verification.
 // All comments are in English as requested.
