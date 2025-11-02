@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import DashboardClient from "./DashboardClient";
+import AdminGuard from "@/components/auth/AdminGuard";
 
 export const metadata: Metadata = {
   title: "Oureum Admin - Dashboard",
@@ -7,5 +8,9 @@ export const metadata: Metadata = {
 };
 
 export default function Page() {
-  return <DashboardClient />;
+  return (
+    <AdminGuard>
+      <DashboardClient />
+    </AdminGuard>
+  );
 }
