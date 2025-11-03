@@ -1,30 +1,65 @@
+// src/components/layout/UserDropdown.tsx
 "use client";
 
 import Image from "next/image";
-import React, { useState } from "react";
+import React from "react";
 import { Dropdown } from "../ui/dropdown/Dropdown";
 import { DropdownItem } from "../ui/dropdown/DropdownItem";
 import { clearAdminSession, readAdminSession } from "@/lib/adminAuth";
 import { useRouter } from "next/navigation";
-import { useDisconnect } from "wagmi"; // <-- add
+import { useDisconnect } from "wagmi";
 
+/**
+ * Hydration-safe UserDropdown
+ * ---------------------------------------------------------
+ * - Avoid SSR/CSR mismatch by not rendering a fake wallet on SSR.
+ * - Render empty string first; after mount, read from localStorage.
+ * - Use `suppressHydrationWarning` on wallet text spans.
+ * - Do NOT pass `disabled` to DropdownItem (not in its prop typing).
+ *   Instead, use `aria-disabled`, visual classes, and click-guard.
+ */
 export default function UserDropdown() {
   const router = useRouter();
-  const { disconnect } = useDisconnect(); // <-- add
-  const [isOpen, setIsOpen] = useState(false);
+  const { disconnect } = useDisconnect();
 
-  const { wallet } = readAdminSession() || {};
-  const walletFull = wallet || "0xAbcdef1234567890abcdef1234567890AbCdEf";
-  const walletShort = walletFull.slice(0, 6) + "…" + walletFull.slice(-4);
+  const [isOpen, setIsOpen] = React.useState(false);
+  const [mounted, setMounted] = React.useState(false);
+  const [walletFull, setWalletFull] = React.useState<string>("");
+
+  React.useEffect(() => {
+    setMounted(true);
+    try {
+      const { wallet } = readAdminSession() || {};
+      setWalletFull(wallet || "");
+    } catch {
+      setWalletFull("");
+    }
+  }, []);
+
+  const walletShort = React.useMemo(() => {
+    if (!mounted || !walletFull) return "";
+    return walletFull.slice(0, 6) + "…" + walletFull.slice(-4);
+  }, [mounted, walletFull]);
+
+  const isCopyDisabled = !mounted || !walletFull;
 
   function toggleDropdown(e: React.MouseEvent<HTMLButtonElement>) {
     e.stopPropagation();
     setIsOpen((prev) => !prev);
   }
-  function closeDropdown() { setIsOpen(false); }
+  function closeDropdown() {
+    setIsOpen(false);
+  }
 
   async function handleCopy() {
-    try { await navigator.clipboard.writeText(walletFull); } catch {}
+    if (isCopyDisabled) return; // guard
+    try {
+      if (typeof navigator !== "undefined" && navigator.clipboard) {
+        await navigator.clipboard.writeText(walletFull);
+      }
+    } catch {
+      // noop
+    }
   }
 
   function handleLogout() {
@@ -33,15 +68,17 @@ export default function UserDropdown() {
       clearAdminSession();     // 1) clear local session
       try { disconnect(); } catch {} // 2) disconnect wagmi connectors (best-effort)
       router.replace("/signin"); // 3) go to sign-in
-      router.refresh();          // 4) re-render app tree
-      // 5) last-resort hard redirect (covers any client cache edge-case)
+      router.refresh();          // 4) ensure re-render
       setTimeout(() => {
-        if (window.location.pathname !== "/signin") {
+        if (typeof window !== "undefined" && window.location.pathname !== "/signin") {
           window.location.replace("/signin");
         }
       }, 0);
-    } catch {}
+    } catch {
+      // noop
+    }
   }
+
   return (
     <div className="relative">
       {/* Trigger button (avatar + short address + chevron) */}
@@ -57,16 +94,20 @@ export default function UserDropdown() {
             height={44}
             src="/images/user/owner.jpg"
             alt="User avatar"
+            priority
           />
         </span>
 
-        <span className="block mr-1 font-medium text-theme-sm text-gray-700 dark:text-gray-400">
+        {/* Avoid hydration mismatch by rendering empty first, then hydrate */}
+        <span
+          suppressHydrationWarning
+          className="block mr-1 font-medium text-theme-sm text-gray-700 dark:text-gray-400"
+        >
           {walletShort}
         </span>
 
         <svg
-          className={`stroke-gray-500 dark:stroke-gray-400 transition-transform duration-200 ${isOpen ? "rotate-180" : ""
-            }`}
+          className={`stroke-gray-500 dark:stroke-gray-400 transition-transform duration-200 ${isOpen ? "rotate-180" : ""}`}
           width="18"
           height="20"
           viewBox="0 0 18 20"
@@ -91,28 +132,36 @@ export default function UserDropdown() {
       >
         {/* Wallet summary */}
         <div>
-          <span className="block font-medium text-gray-700 text-theme-sm dark:text-gray-400">
+          <span
+            suppressHydrationWarning
+            className="block font-medium text-gray-700 text-theme-sm dark:text-gray-400"
+          >
             {walletShort}
           </span>
           <span className="mt-0.5 block text-theme-xs text-gray-500 dark:text-gray-400">
-            Admin (whitelisted)
+            {mounted && walletFull ? "Admin (whitelisted)" : " "}
           </span>
         </div>
 
         {/* Actions */}
         <ul className="flex flex-col gap-1 pt-4 pb-3 border-b border-gray-200 dark:border-gray-800">
-          {/* Copy address */}
+          {/* Copy address (no `disabled` prop; we use aria + guard) */}
           <li>
             <DropdownItem
               onItemClick={() => {
+                if (isCopyDisabled) return; // click-guard
                 handleCopy();
                 closeDropdown();
               }}
               tag="button"
-              className="flex w-full items-center gap-3 px-3 py-2 font-medium text-gray-700 rounded-lg group text-theme-sm hover:bg-gray-100 hover:text-gray-700 dark:text-gray-400 dark:hover:bg-white/5 dark:hover:text-gray-300"
+              aria-disabled={isCopyDisabled}
+              className={`flex w-full items-center gap-3 px-3 py-2 font-medium rounded-lg group text-theme-sm
+                ${isCopyDisabled
+                  ? "text-gray-400 cursor-not-allowed opacity-60"
+                  : "text-gray-700 hover:bg-gray-100 hover:text-gray-700 dark:text-gray-400 dark:hover:bg-white/5 dark:hover:text-gray-300"}`}
             >
               <svg
-                className="fill-gray-500 group-hover:fill-gray-700 dark:fill-gray-400 dark:group-hover:fill-gray-300"
+                className={`${isCopyDisabled ? "fill-gray-400" : "fill-gray-500 group-hover:fill-gray-700 dark:fill-gray-400 dark:group-hover:fill-gray-300"}`}
                 width="24"
                 height="24"
                 viewBox="0 0 24 24"

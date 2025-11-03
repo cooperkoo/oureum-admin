@@ -1,142 +1,210 @@
+// src/app/(admin)/dashboard/DashboardClient.tsx
 "use client";
 
-import React, { useMemo, useState } from "react";
+import React from "react";
+import {
+  getAdminWallet,
+  getPausedStatus,
+  getPriceSnapshot,
+  listUsers,
+  listAudits,
+  listRedemptions,
+  type Activity,
+  type PriceSnapshot,
+  type UserWithBalances,
+} from "@/lib/api";
+import { REDEMPTION_STATUS, type Redemption } from "@/lib/api";
 
+/**
+ * Admin Dashboard (client-side, hydration-safe)
+ * ---------------------------------------------------------
+ * - Do not branch UI during SSR based on client-only states (localStorage, window).
+ * - Read admin wallet after mount, then fetch admin endpoints.
+ * - Any time-sensitive formatting (Date.toLocaleString) is rendered only after mount.
+ */
 
-type UserRow = {
-  address: string;
+type Summary = {
   rmCredit: number;
   rmSpent: number;
   oumgPurchased: number; // grams
-  updated: string;
 };
 
-type Activity = {
-  id: string;
-  type: "Pricing" | "Credit" | "Purchase" | "Pause" | "Resume" | "Mint" | "Burn";
-  detail: string;
-  when: string;
-};
+function pct(num: number, den: number) {
+  const d = den > 0 ? den : 1;
+  return Math.max(0, Math.min(100, Math.round((num / d) * 100)));
+}
 
-const PRICE_MYR_PER_G = 500; // align with Pricing demo
+export default function DashboardClient() {
+  // Mount + admin wallet (read after mount to avoid SSR mismatch)
+  const [mounted, setMounted] = React.useState(false);
+  const [adminWallet, setAdminWallet] = React.useState<string | null>(null);
+  const hasAdmin = !!adminWallet;
 
-export default function Dashboard() {
-  // ===== Demo data (align with Users / Token Ops / Pricing) =====
-  const [isPaused] = useState(false);
-  const [currentSheetId] = useState("PRC-TBD");
-  const [currentPrice] = useState(PRICE_MYR_PER_G);
-  const [users] = useState<UserRow[]>([
-    {
-      address: "0x0bf3E5F98d659BCe08C3aeD0AD5F373Ba1cEb24f",
-      rmCredit: 5000,
-      rmSpent: 1500,
-      oumgPurchased: 3,
-      updated: "2025-09-20 11:05",
-    },
-    {
-      address: "0xAbc…789",
-      rmCredit: 1200,
-      rmSpent: 0,
-      oumgPurchased: 0,
-      updated: "2025-09-19 16:42",
-    },
-    {
-      address: "0xDef…456",
-      rmCredit: 800,
-      rmSpent: 1000,
-      oumgPurchased: 2,
-      updated: "2025-09-18 10:20",
-    },
-  ]);
-  const [activity] = useState<Activity[]>([
-    { id: "A-1006", type: "Purchase", detail: "0x0bf3…b24f bought 1g OUMG (RM 500)", when: "2025-09-20 14:10" },
-    { id: "A-1005", type: "Credit",   detail: "Credited RM 1,000 to 0xAbc…789",   when: "2025-09-20 13:55" },
-    { id: "A-1004", type: "Pricing",  detail: "Pricing updated to RM 500 / g (PRC-TBD)", when: "2025-09-20 09:00" },
-    { id: "A-1003", type: "Resume",   detail: "Token resumed by 0xAdmin…789",    when: "2025-09-19 18:22" },
-    { id: "A-1002", type: "Pause",    detail: "Token paused by 0xAdmin…789",     when: "2025-09-19 18:10" },
-  ]);
-  // ===============================================================
+  // Public state
+  const [price, setPrice] = React.useState<PriceSnapshot | null>(null);
+  const [paused, setPaused] = React.useState<boolean>(false);
 
-  // Totals
-  const totals = useMemo(() => {
-    return users.reduce(
+  // Admin state
+  const [users, setUsers] = React.useState<UserWithBalances[]>([]);
+  const [activity, setActivity] = React.useState<Activity[]>([]);
+  const [pending, setPending] = React.useState<Redemption[]>([]);
+
+  const [loadingPublic, setLoadingPublic] = React.useState(true);
+  const [loadingAdmin, setLoadingAdmin] = React.useState(true);
+  const [errorText, setErrorText] = React.useState<string | null>(null);
+
+  // Mark mounted and hydrate admin wallet from storage
+  React.useEffect(() => {
+    setMounted(true);
+    try {
+      const w = getAdminWallet(); // safe now (client only)
+      setAdminWallet(w || null);
+    } catch {
+      setAdminWallet(null);
+    }
+  }, []);
+
+  // Public data (no admin header)
+  React.useEffect(() => {
+    let alive = true;
+    (async () => {
+      setLoadingPublic(true);
+      try {
+        const [p, pa] = await Promise.all([getPriceSnapshot(), getPausedStatus()]);
+        if (!alive) return;
+        setPrice(p);
+        setPaused(Boolean(pa.paused));
+      } catch (e) {
+        if (!alive) return;
+        const msg = e instanceof Error ? e.message : "Failed to load public data";
+        setErrorText(msg);
+      } finally {
+        if (alive) setLoadingPublic(false);
+      }
+    })();
+    return () => { alive = false; };
+  }, []);
+
+  // Admin data (requires x-admin-wallet) — run only after mount and when wallet exists
+  React.useEffect(() => {
+    if (!mounted || !hasAdmin) {
+      // If not admin, ensure admin blocks show loading=false (to avoid infinite spinner)
+      setLoadingAdmin(false);
+      return;
+    }
+    let alive = true;
+    (async () => {
+      setLoadingAdmin(true);
+      setErrorText(null);
+      try {
+        const [usersRes, auditsRes, pendingRes] = await Promise.all([
+          listUsers({ limit: 200 }),
+          listAudits({ limit: 20 }),
+          listRedemptions({ status: REDEMPTION_STATUS.PENDING, limit: 100 }),
+        ]);
+        if (!alive) return;
+        setUsers(usersRes.data || []);
+        setActivity(auditsRes.data || []);
+        setPending(pendingRes.data || []);
+      } catch (e) {
+        if (!alive) return;
+        const msg = e instanceof Error ? e.message : "Failed to load admin data";
+        setErrorText(msg);
+      } finally {
+        if (alive) setLoadingAdmin(false);
+      }
+    })();
+    return () => { alive = false; };
+  }, [mounted, hasAdmin]);
+
+  // Derived UI data (safe to compute any time)
+  const summary: Summary = React.useMemo(() => {
+    return users.reduce<Summary>(
       (acc, u) => {
-        acc.rmCredit += u.rmCredit;
-        acc.rmSpent += u.rmSpent;
-        acc.oumgPurchased += u.oumgPurchased;
+        acc.rmCredit += Number(u.rm_credit || 0);
+        acc.rmSpent += Number(u.rm_spent || 0);
+        acc.oumgPurchased += Number(u.oumg_grams || 0);
         return acc;
       },
       { rmCredit: 0, rmSpent: 0, oumgPurchased: 0 }
     );
   }, [users]);
 
-  // Top buyers (by OUMG)
-  const topBuyers = useMemo(
-    () =>
-      [...users]
-        .sort((a, b) => b.oumgPurchased - a.oumgPurchased)
-        .slice(0, 5),
+  const topBuyers = React.useMemo(
+    () => [...users].sort((a, b) => b.oumg_grams - a.oumg_grams).slice(0, 5),
     [users]
   );
 
-  const pill = (t: Activity["type"]) => {
-    switch (t) {
-      case "Purchase":
-      case "Mint":
-        return "border-green-300 bg-green-500/10 text-green-700 dark:border-green-800 dark:text-green-400";
-      case "Credit":
-        return "border-blue-300 bg-blue-500/10 text-blue-700 dark:border-blue-800 dark:text-blue-400";
-      case "Burn":
-        return "border-red-300 bg-red-500/10 text-red-700 dark:border-red-800 dark:text-red-400";
-      case "Pause":
-        return "border-yellow-300 bg-yellow-500/10 text-yellow-700 dark:border-yellow-800 dark:text-yellow-400";
-      case "Resume":
-        return "border-emerald-300 bg-emerald-500/10 text-emerald-700 dark:border-emerald-800 dark:text-emerald-400";
-      default:
-        return "border-gray-300 bg-gray-500/10 text-gray-700 dark:border-gray-700 dark:text-gray-300";
-    }
-  };
+  const currentPrice =
+    price?.user_buy_myr_per_g ??
+    price?.price_myr_per_g ??
+    price?.buy_myr_per_g ??
+    0;
 
-  // Simple sparkline (no external lib) -> returns width % based on ratio
-  const ratio = (num: number, max: number) => (max <= 0 ? 0 : Math.min(100, Math.round((num / max) * 100)));
-  // const maxSpent = Math.max(...users.map(u => u.rmSpent), 1);
-  const maxOumg = Math.max(...users.map(u => u.oumgPurchased), 1);
+  const creditPct = pct(summary.rmCredit, summary.rmCredit + summary.rmSpent);
+  const spentPct = pct(summary.rmSpent, summary.rmCredit + summary.rmSpent);
+  const maxOumg = Math.max(...topBuyers.map((b) => b.oumg_grams), 1);
 
   return (
     <div className="space-y-6">
-      {/* Page header */}
+      {/* Header */}
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-xl font-semibold text-gray-800 dark:text-gray-100">Dashboard</h1>
           <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-            High-level overview of pricing, credits, and purchases.
+            Overview of pricing, credits, token ops and recent activity.
           </p>
         </div>
-        <div className="text-xs text-gray-500 dark:text-gray-400">
-          Sheet: <span className="font-medium text-gray-700 dark:text-gray-300">{currentSheetId}</span>
+
+        <div className="flex items-center gap-4 text-xs text-gray-500 dark:text-gray-400">
+          <span>Pending: {pending.length}</span>
+          {/* Render the "connect admin" hint only after mount to avoid SSR mismatch */}
+          <span
+            suppressHydrationWarning
+            className={!mounted || hasAdmin ? "invisible" : "text-amber-600 dark:text-amber-400"}
+          >
+            {!mounted ? " " : (!hasAdmin ? "Connect admin wallet to load admin data." : "")}
+          </span>
         </div>
       </div>
 
-      {/* KPI cards */}
+      {/* KPI Cards */}
       <div className="grid grid-cols-1 gap-4 md:gap-6 md:grid-cols-2 xl:grid-cols-4">
         {/* Current Price */}
         <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-theme-lg dark:border-gray-800 dark:bg-gray-900">
           <div className="text-sm text-gray-500 dark:text-gray-400">Current Price (MYR / g)</div>
           <div className="mt-2 flex items-end justify-between">
-            <div className="text-2xl font-bold text-gray-900 dark:text-white">RM {currentPrice}</div>
-            <span className={`inline-flex items-center rounded-full border px-3 py-1 text-xs font-medium ${isPaused ? "border-red-300 bg-red-500/10 text-red-700 dark:border-red-800 dark:text-red-400" : "border-green-300 bg-green-500/10 text-green-700 dark:border-green-800 dark:text-green-400"}`}>
-              {isPaused ? "Paused" : "Active"}
+            <div className="text-2xl font-bold text-gray-900 dark:text-white">
+              {loadingPublic ? "…" : `RM ${currentPrice || "—"}`}
+            </div>
+            <span
+              className={`inline-flex items-center rounded-full border px-3 py-1 text-xs font-medium ${
+                paused
+                  ? "border-red-300 bg-red-500/10 text-red-700 dark:border-red-800 dark:text-red-400"
+                  : "border-green-300 bg-green-500/10 text-green-700 dark:border-green-800 dark:text-green-400"
+              }`}
+            >
+              {paused ? "Paused" : "Active"}
             </span>
           </div>
-          <div className="mt-3 text-xs text-gray-400 dark:text-gray-500">Sheet ID: {currentSheetId}</div>
+          <div
+            suppressHydrationWarning
+            className="mt-3 text-xs text-gray-400 dark:text-gray-500"
+          >
+            {mounted
+              ? (price?.updated_at ? new Date(price.updated_at).toLocaleString() : (loadingPublic ? "Loading…" : "—"))
+              : " "}
+          </div>
         </div>
 
         {/* Total RM Credit */}
         <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-theme-lg dark:border-gray-800 dark:bg-gray-900">
           <div className="text-sm text-gray-500 dark:text-gray-400">Total RM Credit</div>
-          <div className="mt-2 text-2xl font-bold text-gray-900 dark:text-white">RM {totals.rmCredit}</div>
+          <div className="mt-2 text-2xl font-bold text-gray-900 dark:text-white">
+            {loadingAdmin ? "…" : `RM ${summary.rmCredit}`}
+          </div>
           <div className="mt-3 h-2 w-full rounded-full bg-gray-100 dark:bg-white/5">
-            <div className="h-2 rounded-full bg-brand-500/70" style={{ width: `${ratio(totals.rmCredit, totals.rmCredit + totals.rmSpent)}%` }} />
+            <div className="h-2 rounded-full bg-brand-500/70" style={{ width: `${creditPct}%` }} />
           </div>
           <div className="mt-1 text-xs text-gray-400 dark:text-gray-500">Credit vs. Spent</div>
         </div>
@@ -144,9 +212,11 @@ export default function Dashboard() {
         {/* Total RM Spent */}
         <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-theme-lg dark:border-gray-800 dark:bg-gray-900">
           <div className="text-sm text-gray-500 dark:text-gray-400">Total RM Spent</div>
-          <div className="mt-2 text-2xl font-bold text-gray-900 dark:text-white">RM {totals.rmSpent}</div>
+          <div className="mt-2 text-2xl font-bold text-gray-900 dark:text-white">
+            {loadingAdmin ? "…" : `RM ${summary.rmSpent}`}
+          </div>
           <div className="mt-3 h-2 w-full rounded-full bg-gray-100 dark:bg-white/5">
-            <div className="h-2 rounded-full bg-blue-500/70" style={{ width: `${ratio(totals.rmSpent, totals.rmCredit + totals.rmSpent)}%` }} />
+            <div className="h-2 rounded-full bg-blue-500/70" style={{ width: `${spentPct}%` }} />
           </div>
           <div className="mt-1 text-xs text-gray-400 dark:text-gray-500">Spent vs. Credit</div>
         </div>
@@ -154,12 +224,20 @@ export default function Dashboard() {
         {/* Total OUMG Purchased */}
         <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-theme-lg dark:border-gray-800 dark:bg-gray-900">
           <div className="text-sm text-gray-500 dark:text-gray-400">Total OUMG Purchased</div>
-          <div className="mt-2 text-2xl font-bold text-gray-900 dark:text-white">{totals.oumgPurchased} g</div>
+          <div className="mt-2 text-2xl font-bold text-gray-900 dark:text-white">
+            {loadingAdmin ? "…" : `${summary.oumgPurchased} g`}
+          </div>
           <div className="mt-3 h-2 w-full rounded-full bg-gray-100 dark:bg-white/5">
-            <div className="h-2 rounded-full bg-emerald-500/70" style={{ width: `${ratio(totals.oumgPurchased, totals.oumgPurchased + 1)}%` }} />
+            <div className="h-2 rounded-full bg-emerald-500/70" style={{ width: `${Math.min(100, summary.oumgPurchased)}%` }} />
           </div>
           <div className="mt-1 text-xs text-gray-400 dark:text-gray-500">Cumulative grams</div>
         </div>
+
+        {errorText && (
+          <div className="xl:col-span-4 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700 dark:border-red-900/40 dark:bg-red-950/30 dark:text-red-300">
+            {errorText}
+          </div>
+        )}
       </div>
 
       {/* Two-column: Top Buyers & Recent Activity */}
@@ -169,7 +247,7 @@ export default function Dashboard() {
           <div className="px-6 py-4 border-b border-gray-200 dark:border-gray-800">
             <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-300">Top Buyers</h2>
           </div>
-         <div className="overflow-x-auto scrollbar-thin">
+          <div className="overflow-x-auto scrollbar-thin">
             <table className="w-full text-left text-sm text-gray-600 dark:text-gray-300">
               <thead className="text-xs uppercase text-gray-500 dark:text-gray-400 border-b border-gray-200 dark:border-gray-800">
                 <tr>
@@ -181,26 +259,40 @@ export default function Dashboard() {
                 </tr>
               </thead>
               <tbody>
-                {topBuyers.map((u) => (
-                  <tr key={u.address} className="border-b border-gray-200 dark:border-gray-800">
-                    <td className="px-6 py-4 font-medium text-gray-900 dark:text-white">{u.address}</td>
-                    <td className="px-6 py-4">{u.oumgPurchased}</td>
-                    <td className="px-6 py-4">RM {u.rmSpent}</td>
-                    <td className="px-6 py-4">
-                      {/* simple proportional bar */}
-                      <div className="h-2 w-40 rounded-full bg-gray-100 dark:bg-white/5">
-                        <div className="h-2 rounded-full bg-emerald-500/70" style={{ width: `${ratio(u.oumgPurchased, maxOumg)}%` }} />
-                      </div>
+                {loadingAdmin ? (
+                  <tr>
+                    <td className="px-6 py-8 text-center text-gray-500 dark:text-gray-400" colSpan={5}>
+                      Loading…
                     </td>
-                    <td className="px-6 py-4">{u.updated}</td>
                   </tr>
-                ))}
-                {topBuyers.length === 0 && (
+                ) : topBuyers.length === 0 ? (
                   <tr>
                     <td className="px-6 py-8 text-center text-gray-500 dark:text-gray-400" colSpan={5}>
                       No buyers yet.
                     </td>
                   </tr>
+                ) : (
+                  topBuyers.map((u, idx) => (
+                    <tr key={u.wallet || `buyer-${idx}`} className="border-b border-gray-200 dark:border-gray-800">
+                      <td className="px-6 py-4 font-medium text-gray-900 dark:text-white">{u.wallet}</td>
+                      <td className="px-6 py-4">{u.oumg_grams}</td>
+                      <td className="px-6 py-4">RM {u.rm_spent}</td>
+                      <td className="px-6 py-4">
+                        <div className="h-2 w-40 rounded-full bg-gray-100 dark:bg-white/5">
+                          <div
+                            className="h-2 rounded-full bg-emerald-500/70"
+                            style={{ width: `${pct(u.oumg_grams, maxOumg)}%` }}
+                          />
+                        </div>
+                      </td>
+                      <td
+                        className="px-6 py-4"
+                        suppressHydrationWarning
+                      >
+                        {mounted && u.updated_at ? new Date(u.updated_at).toLocaleString() : " "}
+                      </td>
+                    </tr>
+                  ))
                 )}
               </tbody>
             </table>
@@ -212,48 +304,33 @@ export default function Dashboard() {
           <div className="mb-4">
             <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-300">Recent Activity</h2>
           </div>
-          <ul className="space-y-3">
-            {activity.slice(0, 8).map((a) => (
-              <li key={a.id} className="flex items-start gap-3 rounded-xl border border-gray-200 p-3 dark:border-gray-800">
-                <span className={`mt-0.5 inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium ${pill(a.type)}`}>
-                  {a.type}
-                </span>
-                <div className="flex-1">
-                  <div className="text-sm text-gray-800 dark:text-gray-200">{a.detail}</div>
-                  <div className="text-xs text-gray-500 dark:text-gray-400">{a.when}</div>
-                </div>
-              </li>
-            ))}
-          </ul>
-        </div>
-      </div>
-
-      {/* Bottom: Credit vs Spent by Address */}
-      <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-theme-lg dark:border-gray-800 dark:bg-gray-900">
-        <div className="mb-4">
-          <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-300">Credit vs. Spent by Address</h2>
-          <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-            Quick visual comparison per address.
-          </p>
-        </div>
-        <div className="space-y-4">
-          {users.map((u) => {
-            const total = u.rmCredit + u.rmSpent || 1;
-            const wSpent = Math.round((u.rmSpent / total) * 100);
-            const wCredit = 100 - wSpent;
-            return (
-              <div key={u.address}>
-                <div className="mb-1 text-sm font-medium text-gray-800 dark:text-gray-200">{u.address}</div>
-                <div className="flex h-3 w-full overflow-hidden rounded-full bg-gray-100 dark:bg-white/5">
-                  <div className="h-3 bg-blue-500/70" style={{ width: `${wSpent}%` }} title={`Spent: RM ${u.rmSpent}`} />
-                  <div className="h-3 bg-brand-500/70" style={{ width: `${wCredit}%` }} title={`Credit: RM ${u.rmCredit}`} />
-                </div>
-                <div className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                  Spent: RM {u.rmSpent} · Credit: RM {u.rmCredit}
-                </div>
-              </div>
-            );
-          })}
+          {loadingAdmin ? (
+            <div className="p-4 text-sm text-gray-500 dark:text-gray-400">Loading…</div>
+          ) : (
+            <ul className="space-y-3">
+              {activity.slice(0, 8).map((a, idx) => {
+                const key = a && (a as any).id != null ? String((a as any).id) : `${a?.type ?? "evt"}-${a?.createdAt ?? "t"}-${idx}`;
+                return (
+                  <li key={key} className="flex items-start gap-3 rounded-xl border border-gray-200 p-3 dark:border-gray-800">
+                    <span className="mt-0.5 inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium border-gray-300 bg-gray-500/10 text-gray-700 dark:border-gray-700 dark:text-gray-300">
+                      {a.type}
+                    </span>
+                    <div className="flex-1">
+                      <div className="text-sm text-gray-800 dark:text-gray-200">{a.detail || a.type}</div>
+                      <div className="text-xs text-gray-500 dark:text-gray-400" suppressHydrationWarning>
+                        {mounted && a.createdAt ? new Date(a.createdAt).toLocaleString() : " "}
+                      </div>
+                    </div>
+                  </li>
+                );
+              })}
+              {activity.length === 0 && (
+                <li className="rounded-xl border border-gray-200 p-3 text-sm text-gray-500 dark:border-gray-800 dark:text-gray-400">
+                  No activity yet.
+                </li>
+              )}
+            </ul>
+          )}
         </div>
       </div>
     </div>

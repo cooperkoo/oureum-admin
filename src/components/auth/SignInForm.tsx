@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-// src/components/auth/SigninForm.tsx
+// src/components/auth/SignInForm.tsx
 "use client";
 
 import React from "react";
@@ -10,23 +10,26 @@ import {
   saveAdminSession,
   clearAdminSession,
   readAdminSession,
-  requestMetaMaskAddress, // ✅ reuse helper from lib
+  requestMetaMaskAddress, // Helper to get MetaMask address
 } from "@/lib/adminAuth";
+import { setAdminWallet } from "@/lib/api"; // ✅ Import to store admin wallet for API header
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE?.replace(/\/+$/, "") || "";
 
 /**
- * Admin Sign-In (explicit-only):
- * - DOES NOT auto-verify based on wallet connection.
- * - Only verifies when user clicks the button.
- * - Uses window.ethereum directly via helper (no RainbowKit / MetaMask SDK).
+ * Admin Sign-In Form
+ * ------------------
+ * - Asks MetaMask for wallet connection.
+ * - Verifies if wallet is whitelisted as admin.
+ * - On success, saves both the session and admin wallet for API headers.
+ * - Redirects to Dashboard after login.
  */
 export default function SignInForm() {
   const router = useRouter();
   const [checking, setChecking] = React.useState(false);
   const [error, setError] = React.useState("");
 
-  // If already logged in, go Dashboard
+  // If already logged in, redirect to Dashboard
   React.useEffect(() => {
     const { isAdmin } = readAdminSession();
     if (isAdmin) router.replace("/");
@@ -35,7 +38,7 @@ export default function SignInForm() {
   const handleSignIn = async () => {
     setError("");
 
-    // Quick pre-check: require API base so backend verification can run
+    // Ensure backend is configured
     if (!API_BASE) {
       setError(
         "Backend URL is not configured. Please set NEXT_PUBLIC_API_BASE (e.g. http://localhost:4000)."
@@ -46,18 +49,22 @@ export default function SignInForm() {
     try {
       setChecking(true);
 
-      // 1) Ask MetaMask for address explicitly on click
+      // 1. Ask MetaMask for address
       const addr = await requestMetaMaskAddress();
       const normalized = normalizeAddress(addr);
       if (!normalized) throw new Error("Invalid address returned.");
 
-      // 2) Backend verification
+      // 2. Backend verification
       const ok = await isAdminAddress(normalized);
       if (ok) {
+        // ✅ Save both session and wallet address
         saveAdminSession(normalized);
-        router.replace("/"); // go dashboard
+        setAdminWallet(normalized); // ensure admin APIs include x-admin-wallet
+
+        router.replace("/"); // redirect to dashboard
       } else {
         clearAdminSession();
+        setAdminWallet(null); // remove wallet if not authorized
         setError("This wallet is not in the admin whitelist.");
       }
     } catch (e: any) {
@@ -69,7 +76,7 @@ export default function SignInForm() {
 
   return (
     <div className="min-h-screen bg-white dark:bg-gray-900 flex">
-      {/* Left section (form) */}
+      {/* Left side: login form */}
       <div className="flex flex-col flex-1 lg:w-1/2 w-full">
         <div className="flex flex-col justify-center flex-1 w-full max-w-md mx-auto px-6">
           <div className="mb-8">
@@ -81,7 +88,7 @@ export default function SignInForm() {
             </p>
           </div>
 
-          {/* Clean MetaMask button */}
+          {/* MetaMask connect button */}
           <button
             onClick={handleSignIn}
             disabled={checking}
@@ -111,15 +118,15 @@ export default function SignInForm() {
         </div>
       </div>
 
-      {/* Right decoration area */}
+      {/* Right side: illustration / brand area */}
       <div className="hidden lg:flex lg:w-1/2 items-center justify-center p-12 bg-gray-50 dark:bg-gray-900/50">
-        <div className="w-full max-w-md">{/* brand/illustration (optional) */}</div>
+        <div className="w-full max-w-md">{/* optional brand graphic */}</div>
       </div>
     </div>
   );
 }
 
-/** Minimal MetaMask Fox SVG (no external asset) */
+/** MetaMask Fox Icon */
 function MetaMaskFox(props: React.SVGProps<SVGSVGElement>) {
   return (
     <svg viewBox="0 0 318 318" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" {...props}>
