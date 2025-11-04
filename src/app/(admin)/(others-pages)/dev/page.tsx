@@ -18,11 +18,11 @@ import {
   createGoldLedger,
   listRedemptions,
   updateRedemption,
+  REDEMPTION_STATUS,
   type RedemptionStatus,
 } from "@/lib/api";
 import type { Address } from "@/lib/api";
 
-import { REDEMPTION_STATUS, type Redemption } from "@/lib/api";
 
 /**
  * Dev Page: quick admin actions and API probes.

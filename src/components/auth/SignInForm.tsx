@@ -10,19 +10,18 @@ import {
   saveAdminSession,
   clearAdminSession,
   readAdminSession,
-  requestMetaMaskAddress, // Helper to get MetaMask address
+  requestMetaMaskAddress,
 } from "@/lib/adminAuth";
-import { setAdminWallet } from "@/lib/api"; // ✅ Import to store admin wallet for API header
+import { setAdminWallet } from "@/lib/api"; // Keep API header in sync
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE?.replace(/\/+$/, "") || "";
 
 /**
  * Admin Sign-In Form
  * ------------------
- * - Asks MetaMask for wallet connection.
- * - Verifies if wallet is whitelisted as admin.
- * - On success, saves both the session and admin wallet for API headers.
- * - Redirects to Dashboard after login.
+ * - Requests MetaMask account on click (user gesture).
+ * - Verifies against backend admin whitelist.
+ * - On success, writes both session and legacy wallet key for header auth.
  */
 export default function SignInForm() {
   const router = useRouter();
@@ -38,7 +37,6 @@ export default function SignInForm() {
   const handleSignIn = async () => {
     setError("");
 
-    // Ensure backend is configured
     if (!API_BASE) {
       setError(
         "Backend URL is not configured. Please set NEXT_PUBLIC_API_BASE (e.g. http://localhost:4000)."
@@ -49,26 +47,38 @@ export default function SignInForm() {
     try {
       setChecking(true);
 
-      // 1. Ask MetaMask for address
+      // Hard reset before asking MetaMask (avoid stale local state)
+      clearAdminSession();
+      setAdminWallet(null);
+
+      // 1) Ask MetaMask (must be from user click to guarantee the popup)
       const addr = await requestMetaMaskAddress();
       const normalized = normalizeAddress(addr);
       if (!normalized) throw new Error("Invalid address returned.");
 
-      // 2. Backend verification
+      // 2) Verify admin whitelist by calling an admin-only endpoint
       const ok = await isAdminAddress(normalized);
-      if (ok) {
-        // ✅ Save both session and wallet address
-        saveAdminSession(normalized);
-        setAdminWallet(normalized); // ensure admin APIs include x-admin-wallet
 
-        router.replace("/"); // redirect to dashboard
+      if (ok) {
+        // Persist both session + header wallet
+        saveAdminSession(normalized);
+        setAdminWallet(normalized);
+
+        router.replace("/"); // success
       } else {
-        clearAdminSession();
-        setAdminWallet(null); // remove wallet if not authorized
         setError("This wallet is not in the admin whitelist.");
+        // Ensure we remain logged out
+        clearAdminSession();
+        setAdminWallet(null);
       }
     } catch (e: any) {
+      // Typical errors to bubble up:
+      // - MetaMask not installed
+      // - User rejected (4001)
+      // - CORS / network errors to the API
       setError(e?.message || "Failed to sign in with MetaMask.");
+      clearAdminSession();
+      setAdminWallet(null);
     } finally {
       setChecking(false);
     }
@@ -88,7 +98,7 @@ export default function SignInForm() {
             </p>
           </div>
 
-          {/* MetaMask connect button */}
+          {/* MetaMask connect button (user gesture = click) */}
           <button
             onClick={handleSignIn}
             disabled={checking}

@@ -22,6 +22,7 @@
     "@tanstack/react-query": "^5.90.5",
     "apexcharts": "^4.3.0",
     "autoprefixer": "^10.4.20",
+    "ethers": "^6.15.0",
     "flatpickr": "^4.6.13",
     "next": "15.2.3",
     "react": "^19.0.0",
