@@ -66,7 +66,7 @@ export default function UserDropdown() {
     try {
       setIsOpen(false);
       clearAdminSession();     // 1) clear local session
-      try { disconnect(); } catch {} // 2) disconnect wagmi connectors (best-effort)
+      try { disconnect(); } catch { } // 2) disconnect wagmi connectors (best-effort)
       router.replace("/signin"); // 3) go to sign-in
       router.refresh();          // 4) ensure re-render
       setTimeout(() => {
@@ -201,21 +201,23 @@ export default function UserDropdown() {
           {/* Support placeholder */}
           <li>
             <DropdownItem
-              onItemClick={closeDropdown}
               tag="a"
-              href="/support"
-              className="flex items-center gap-3 px-3 py-2 font-medium text-gray-700 rounded-lg group text-theme-sm hover:bg-gray-100 hover:text-gray-700 dark:text-gray-400 dark:hover:bg-white/5 dark:hover:text-gray-300"
+              href="#"
+              onItemClick={() => {}}
+              className="flex items-center gap-3 px-3 py-2 rounded-lg font-medium text-theme-sm
+               text-gray-400 dark:text-gray-600
+               cursor-not-allowed select-none
+               hover:bg-transparent hover:text-gray-400
+               dark:hover:bg-transparent dark:hover:text-gray-600"
             >
               <svg
-                className="fill-gray-500 group-hover:fill-gray-700 dark:fill-gray-400 dark:group-hover:fill-gray-300"
-                width="24"
-                height="24"
+                className="w-5 h-5 fill-current text-gray-400 dark:text-gray-600"
                 viewBox="0 0 24 24"
                 aria-hidden="true"
               >
                 <path d="M12 2a10 10 0 1 0 .001 20.001A10 10 0 0 0 12 2Zm1 15h-2v-2h2v2Zm1.07-7.75-.9.92A2.5 2.5 0 0 0 12.5 12h-1v-1c0-.55.45-1 1-1 .28 0 .5-.22.5-.5 0-.28-.22-.5-.5-.5-.28 0-.5.22-.5.5h-2a2.5 2.5 0 1 1 5 0c0 .69-.28 1.32-.73 1.75Z" />
               </svg>
-              Support
+              <span>Support</span>
             </DropdownItem>
           </li>
         </ul>

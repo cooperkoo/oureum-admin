@@ -1,8 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-// src/lib/api.ts
 // Frontend API helper aligned with current backend routes.
-// ✅ 2025-11-04: Robust pricing normalization + safe front-end inference
-//    so the History table shows Buy/Sell/Spread when the backend omits them.
 
 export type Address = `0x${string}`;
 
@@ -25,16 +22,13 @@ export type UserWithBalances = {
 };
 
 export type PriceSnapshot = {
-  // Core price fields
-  price_myr_per_g?: number;     // computed/base MYR per gram
-  buy_myr_per_g?: number;       // internal/admin buy
-  sell_myr_per_g?: number;      // internal/admin sell
-  user_buy_myr_per_g?: number;  // end-user buy
-  user_sell_myr_per_g?: number; // end-user sell
-
-  // Extras
-  spread_myr_per_g?: number;    // absolute spread in MYR/gram
-  spread_bps?: number;          // basis points
+  price_myr_per_g?: number;
+  buy_myr_per_g?: number;
+  sell_myr_per_g?: number;
+  user_buy_myr_per_g?: number;
+  user_sell_myr_per_g?: number;
+  spread_myr_per_g?: number;
+  spread_bps?: number;
   source?: "manual" | "cron" | string;
   updated_at?: string;
   created_at?: string;
@@ -84,13 +78,13 @@ export const API_BASE =
 
 export const API_PATHS = {
   // Pricing
-  priceCurrent: "/api/price/current",         // GET (public), POST (admin for manual update)
-  priceSnapshots: "/api/price/snapshots",     // GET (admin)
+  priceCurrent: "/api/price/current",
+  priceSnapshots: "/api/price/snapshots",
 
   // Chain pause/resume
-  chainPaused: "/api/chain/paused",           // GET (public)
-  chainPause: "/api/chain/pause",             // POST (admin)
-  chainUnpause: "/api/chain/unpause",         // POST (admin)
+  chainPaused: "/api/chain/paused",
+  chainPause: "/api/chain/pause",
+  chainUnpause: "/api/chain/unpause",
 
   // Admin
   adminFundPreset: "/api/admin/fund-preset",
@@ -99,6 +93,9 @@ export const API_PATHS = {
   adminUserPurchase: (wallet: string) => `/api/admin/users/${wallet}/purchase`,
   adminBalances: "/api/admin/balances",
   adminAudits: "/api/admin/audits",
+
+  // 🔥 On-chain mint (backend performs the transaction)
+  adminMintOnchain: "/api/admin/mint-onchain",
 
   // Token operations (fallback)
   tokenBuyMint: "/api/token/buy-mint",
@@ -162,7 +159,6 @@ async function parseJsonSafe<T>(res: Response): Promise<T> {
   try {
     return JSON.parse(text) as T;
   } catch {
-    // if backend returns plain text, coerce to { message }
     return { message: text } as unknown as T;
   }
 }
@@ -191,9 +187,8 @@ async function fetchJson<T>(
 }
 
 // ============================================================================
-// Pricing helpers: normalization + safe inference
+// Pricing helpers (normalization + safe inference)
 // ============================================================================
-
 type AnyObj = Record<string, any>;
 
 function toNum(v: any): number | undefined {
@@ -207,13 +202,7 @@ function round2(n: number | undefined): number | undefined {
   return Math.round((n as number) * 100) / 100;
 }
 
-/**
- * Attempt to infer missing fields when the backend doesn't send them.
- * Rules:
- * - Never override provided values.
- * - Prefer symmetric inference around base (buy = base + d/2, sell = base - d/2).
- * - Only compute when input signals are trustworthy (base > 0, spread >= 0, etc).
- */
+/** Fill missing price fields by inference. */
 function fillDerivedPrices(out: PriceSnapshot) {
   const base = out.price_myr_per_g;
   let buy = out.buy_myr_per_g;
@@ -223,40 +212,33 @@ function fillDerivedPrices(out: PriceSnapshot) {
   let spreadMYR = out.spread_myr_per_g;
   let bps = out.spread_bps;
 
-  // 1) If spread in MYR is missing but we have buy/sell → compute it.
   if ((spreadMYR == null || !Number.isFinite(spreadMYR)) && buy != null && sell != null) {
     spreadMYR = Math.abs((buy as number) - (sell as number));
   }
 
-  // 2) If spread in MYR is missing but base & bps exist → compute spreadMYR.
   if ((spreadMYR == null || !Number.isFinite(spreadMYR)) && base != null && bps != null && base > 0) {
     spreadMYR = (base as number) * (bps as number) / 10000;
   }
 
-  // 3) If buy/sell are missing but we have base & spreadMYR → infer symmetrically.
   if ((buy == null || sell == null) && base != null && spreadMYR != null) {
     const half = (spreadMYR as number) / 2;
     if (buy == null) buy = (base as number) + half;
     if (sell == null) sell = (base as number) - half;
   }
 
-  // 4) If only one side (buy or sell) + base → reflect around base.
   if (buy != null && sell == null && base != null) {
     sell = (2 * (base as number)) - (buy as number);
   } else if (sell != null && buy == null && base != null) {
     buy = (2 * (base as number)) - (sell as number);
   }
 
-  // 5) If bps missing but we have base & spreadMYR → compute bps.
   if ((bps == null || !Number.isFinite(bps)) && base != null && base > 0 && spreadMYR != null) {
     bps = (spreadMYR as number) / (base as number) * 10000;
   }
 
-  // 6) user prices default to internal prices when absent.
   if (ubuy == null && buy != null) ubuy = buy;
   if (usell == null && sell != null) usell = sell;
 
-  // Round monetary values to 2 decimals; bps keep integer-ish precision.
   out.buy_myr_per_g = round2(buy);
   out.sell_myr_per_g = round2(sell);
   out.user_buy_myr_per_g = round2(ubuy);
@@ -265,14 +247,10 @@ function fillDerivedPrices(out: PriceSnapshot) {
   if (bps != null && Number.isFinite(bps)) out.spread_bps = Math.round(bps as number);
 }
 
-/**
- * Map an arbitrary backend shape into the unified PriceSnapshot.
- * We accept multiple aliases to be resilient across services.
- */
+/** Normalize backend shapes into PriceSnapshot. */
 function normalizePriceSnapshot(x: AnyObj | undefined | null): PriceSnapshot {
   const obj = x ?? {};
 
-  // Base price (computed)
   const base =
     obj.price_myr_per_g ??
     obj.computed_myr_per_g ??
@@ -280,7 +258,6 @@ function normalizePriceSnapshot(x: AnyObj | undefined | null): PriceSnapshot {
     obj.price ??
     obj.base_myr_per_g;
 
-  // Internal prices
   const buy =
     obj.buy_myr_per_g ??
     obj.buyMyrPerG ??
@@ -295,17 +272,14 @@ function normalizePriceSnapshot(x: AnyObj | undefined | null): PriceSnapshot {
     obj.sellPrice ??
     obj.sell;
 
-  // End-user prices
   const ubuy = obj.user_buy_myr_per_g ?? obj.userBuyMyrPerG ?? obj.user_buy;
   const usell = obj.user_sell_myr_per_g ?? obj.userSellMyrPerG ?? obj.user_sell;
 
-  // Spread / Markup
   const spreadMYR =
     obj.spread_myr_per_g ?? obj.spreadMyrPerG ?? obj.myr_spread ?? obj.absolute_spread;
   const spreadBps =
     obj.spread_bps ?? obj.markup_bps ?? obj.spreadBps ?? obj.markupBps;
 
-  // Timestamps & meta
   const updated =
     obj.updated_at ??
     obj.updatedAt ??
@@ -339,15 +313,12 @@ function normalizePriceSnapshot(x: AnyObj | undefined | null): PriceSnapshot {
     note: obj.note ?? obj.remark ?? obj.comments,
   };
 
-  // Safely derive missing numbers for display (History table needs these).
   fillDerivedPrices(out);
-
   return out;
 }
 
 // ---------- Pricing ----------
 export async function getPriceSnapshot(): Promise<PriceSnapshot> {
-  // Public route; do NOT send admin header
   const r = await fetchJson<{ data?: AnyObj } | AnyObj>(API_PATHS.priceCurrent, { admin: false });
   const raw = (r as any)?.data ?? r;
   return normalizePriceSnapshot(raw);
@@ -370,7 +341,6 @@ export function listPriceSnapshots(params?: { limit?: number; offset?: number })
 export type ManualPriceUpdatePayload = {
   myrPerG?: number;
   note?: string;
-  // extended keys — some backends support these
   myrPerG_buy?: number;
   myrPerG_sell?: number;
   user_buy_myr_per_g?: number;
@@ -428,6 +398,7 @@ export function purchaseAdminUser(payload: {
   grams: number;
   unit_price_myr_per_g: number;
   note?: string;
+  tx_hash?: string;
 }) {
   const path = API_PATHS.adminUserPurchase(payload.wallet.toLowerCase());
   return fetchJson<UserWithBalances>(path, {
@@ -437,6 +408,7 @@ export function purchaseAdminUser(payload: {
       grams: payload.grams,
       unit_price_myr_per_g: payload.unit_price_myr_per_g,
       note: payload.note,
+      tx_hash: payload.tx_hash,
     },
   });
 }
@@ -531,4 +503,22 @@ export async function connectMetaMaskAsAdmin(): Promise<string> {
   if (!/^0x[a-f0-9]{40}$/.test(addr)) throw new Error("No valid account from MetaMask.");
   setAdminWallet(addr);
   return addr;
+}
+
+// ============================================================================
+// On-chain mint (backend) — returns tx_hash
+// ============================================================================
+export type AdminMintOnchainPayload = {
+  wallet: Address;
+  grams: number;
+  unit_price_myr_per_g: number;
+  note?: string;
+};
+
+export function adminMintOnchain(payload: AdminMintOnchainPayload): Promise<{ tx_hash: string }> {
+  return fetchJson<{ ok?: boolean; tx_hash: string }>(API_PATHS.adminMintOnchain, {
+    method: "POST",
+    admin: true,
+    body: payload,
+  }).then((r) => ({ tx_hash: r.tx_hash }));
 }

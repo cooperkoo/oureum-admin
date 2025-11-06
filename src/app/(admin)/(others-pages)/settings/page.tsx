@@ -3,7 +3,7 @@
 import React, { useState } from "react";
 
 export default function SettingsPage() {
-  // Demo state for editable texts
+  // Demo state for editable texts (now disabled)
   const [title, setTitle] = useState("Oureum Admin");
   const [subtitle, setSubtitle] = useState("Internal control panel");
   const [disclaimer, setDisclaimer] = useState(
@@ -11,8 +11,11 @@ export default function SettingsPage() {
   );
 
   const handleSave = () => {
-    alert("Settings saved (demo only).");
+    // Disabled: no-op
+    alert("Settings are read-only in this view.");
   };
+
+  const DISABLED = true;
 
   return (
     <div className="space-y-6">
@@ -33,9 +36,10 @@ export default function SettingsPage() {
         <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3">
           Admin Addresses
         </h2>
-        <ul className="space-y-2 text-sm text-gray-700 dark:text-gray-300">
-          <li>0x0bf3E5F98d659BCe08C3aeD0AD5F373Ba1cEb24f</li>
-          <li>0xAdmin…789</li>
+        <ul className="space-y-2 text-sm text-gray-700 dark:text-gray-300 font-mono break-all">
+          <li>0x0bf3e5f98d659bce08c3aed0ad5f373ba1ceb24f</li>
+          <li>0x21dd60982155a0182d94bcaaacc1c61550c99c69</li>
+          <li>0x0bf3e5f98d659bce08c3aed0ad5f373ba1ceb24f</li>
         </ul>
       </div>
 
@@ -48,7 +52,7 @@ export default function SettingsPage() {
           <div>
             <dt className="text-gray-500 dark:text-gray-400">Chain ID</dt>
             <dd className="font-medium text-gray-800 dark:text-gray-100">
-              72888
+              828828
             </dd>
           </div>
           <div>
@@ -57,21 +61,21 @@ export default function SettingsPage() {
               Oureum Testnet (L1)
             </dd>
           </div>
-          <div>
+          <div className="sm:col-span-2">
             <dt className="text-gray-500 dark:text-gray-400">RPC URL</dt>
             <dd className="font-medium text-gray-800 dark:text-gray-100">
-              https://rpc.oureum.test
+              https://testnet-rpc.oureum.com
             </dd>
           </div>
         </dl>
       </div>
 
-      {/* Display Texts */}
+      {/* Display Texts (all disabled) */}
       <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-theme-lg dark:border-gray-800 dark:bg-gray-900">
         <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3">
           Display Texts
         </h2>
-        <div className="space-y-4">
+        <div className="space-y-4 opacity-80">
           <div>
             <label className="mb-1 block text-sm text-gray-700 dark:text-gray-300">
               App Title
@@ -79,7 +83,9 @@ export default function SettingsPage() {
             <input
               value={title}
               onChange={(e) => setTitle(e.target.value)}
-              className="h-11 w-full rounded-lg border border-gray-200 bg-transparent px-3 text-sm text-gray-800 shadow-theme-xs placeholder:text-gray-400 focus:border-brand-300 focus:outline-hidden focus:ring-3 focus:ring-brand-500/10 dark:border-gray-800 dark:bg-gray-900 dark:text-white/90"
+              disabled={DISABLED}
+              readOnly
+              className="h-11 w-full rounded-lg border border-gray-200 bg-gray-50 px-3 text-sm text-gray-800 shadow-theme-xs placeholder:text-gray-400 dark:border-gray-800 dark:bg-gray-800/50 dark:text-white/90"
             />
           </div>
 
@@ -90,7 +96,9 @@ export default function SettingsPage() {
             <input
               value={subtitle}
               onChange={(e) => setSubtitle(e.target.value)}
-              className="h-11 w-full rounded-lg border border-gray-200 bg-transparent px-3 text-sm text-gray-800 shadow-theme-xs placeholder:text-gray-400 focus:border-brand-300 focus:outline-hidden focus:ring-3 focus:ring-brand-500/10 dark:border-gray-800 dark:bg-gray-900 dark:text-white/90"
+              disabled={DISABLED}
+              readOnly
+              className="h-11 w-full rounded-lg border border-gray-200 bg-gray-50 px-3 text-sm text-gray-800 shadow-theme-xs placeholder:text-gray-400 dark:border-gray-800 dark:bg-gray-800/50 dark:text-white/90"
             />
           </div>
 
@@ -102,7 +110,9 @@ export default function SettingsPage() {
               value={disclaimer}
               onChange={(e) => setDisclaimer(e.target.value)}
               rows={3}
-              className="w-full rounded-lg border border-gray-200 bg-transparent px-3 py-2 text-sm text-gray-800 shadow-theme-xs placeholder:text-gray-400 focus:border-brand-300 focus:outline-hidden focus:ring-3 focus:ring-brand-500/10 dark:border-gray-800 dark:bg-gray-900 dark:text-white/90"
+              disabled={DISABLED}
+              readOnly
+              className="w-full rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-800 shadow-theme-xs placeholder:text-gray-400 dark:border-gray-800 dark:bg-gray-800/50 dark:text-white/90"
             />
           </div>
         </div>
@@ -110,7 +120,10 @@ export default function SettingsPage() {
         <div className="mt-6 flex justify-end">
           <button
             onClick={handleSave}
-            className="inline-flex items-center rounded-lg border border-brand-300 bg-brand-500/10 px-4 py-2 text-sm font-semibold text-brand-700 shadow-theme-xs hover:bg-brand-500/15 dark:border-brand-800 dark:text-brand-300"
+            disabled={DISABLED}
+            aria-disabled={DISABLED}
+            className="inline-flex items-center rounded-lg border border-gray-200 bg-gray-100 px-4 py-2 text-sm font-semibold text-gray-400 shadow-theme-xs cursor-not-allowed dark:border-gray-800 dark:bg-gray-800/40 dark:text-gray-500"
+            title="Read-only"
           >
             Save
           </button>

@@ -2,9 +2,11 @@
 
 // app/(admin)/users/page.tsx
 // Users admin page wired to backend admin endpoints.
-// English-only comments; client component to avoid hydration mismatch.
+// - Server-side search by wallet (with debounce + Enter immediate search)
+// - Keeps existing pricing + modals + totals behavior
+// English-only comments; UI text stays as in your code.
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState, useCallback } from "react";
 import type { Address, UserWithBalances, PriceSnapshot } from "@/lib/api";
 import {
   getAdminWallet,
@@ -20,8 +22,6 @@ import MintModal from "./Modals/MintModal";
 // Fallback price if backend returns nothing usable
 const FALLBACK_PRICE_MYR_PER_G = 500;
 
-type Mode = "add" | "credit" | "mint";
-
 type Row = {
   id?: number;
   address: Address;
@@ -32,11 +32,11 @@ type Row = {
   updated?: string;
 };
 
-/** Helper function to truncate wallet addresses */
+/** Helper: truncate wallet for display */
 function truncateAddress(address: string, startChars = 6, endChars = 4): string {
   if (!address) return "";
   if (address.length <= startChars + endChars) return address;
-  return `${address.substring(0, startChars)}...${address.substring(address.length - endChars)}`;
+  return `${address.slice(0, startChars)}...${address.slice(-endChars)}`;
 }
 
 /** Reusable address display with copy & tooltip (pure client) */
@@ -58,6 +58,7 @@ function AddressDisplay({ address }: { address: Address }) {
         className="relative flex items-center justify-center opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity disabled:opacity-50"
         disabled={copied}
         aria-label="Copy address"
+        title={copied ? "Copied!" : "Copy address"}
       >
         {copied ? (
           // Checkmark icon
@@ -77,7 +78,7 @@ function AddressDisplay({ address }: { address: Address }) {
         )}
       </button>
 
-      {/* Hover tooltip */}
+      {/* Hover tooltip with full address */}
       <div
         className="
           absolute left-0 bottom-full mb-2
@@ -131,6 +132,9 @@ export default function UsersPage() {
   const [query, setQuery] = useState("");
   const debouncedQ = useDebounced(query, 250);
 
+  // A manual bump to force immediate search when pressing Enter.
+  const [searchNonce, setSearchNonce] = useState(0);
+
   // Modal states
   const [addOpen, setAddOpen] = useState(false);
   const [creditOpen, setCreditOpen] = useState(false);
@@ -142,21 +146,19 @@ export default function UsersPage() {
     setAdminWalletState(getAdminWallet());
   }, []);
 
-  // Fetch price & users when admin is present (or fetch price anyway)
-  useEffect(() => {
-    let alive = true;
-    async function run() {
+  /** Fetch function reused by both debounced and immediate searches */
+  const fetchData = useCallback(
+    async (qForFetch: string | undefined) => {
       setLoading(true);
       setErrorText(null);
       try {
+        // Fetch current price (best effort) and user list (requires admin wallet)
         const [p, u] = await Promise.all([
           getPriceSnapshot().catch(() => ({} as PriceSnapshot)),
           adminWallet
-            ? listUsers({ q: debouncedQ, limit: 100 })
+            ? listUsers({ q: qForFetch ?? "", limit: 100 })
             : Promise.resolve({ data: [] as UserWithBalances[] }),
         ]);
-
-        if (!alive) return;
 
         setPrice(p || null);
 
@@ -166,23 +168,41 @@ export default function UsersPage() {
           rmCredit: Number(x.rm_credit || 0),
           rmSpent: Number(x.rm_spent || 0),
           oumgPurchased: Number(x.oumg_grams || 0),
-          note: x.note ?? undefined,
-          updated: x.updated_at || x.created_at || "",
+          note: (x as any).note ?? undefined,
+          updated: (x as any).updated_at || (x as any).created_at || "",
         }));
         setUsers(rows);
       } catch (e) {
-        if (!alive) return;
         const msg = e instanceof Error ? e.message : "Failed to load users";
         setErrorText(msg);
       } finally {
-        if (alive) setLoading(false);
+        setLoading(false);
       }
+    },
+    [adminWallet]
+  );
+
+  // Debounced auto-search
+  useEffect(() => {
+    // Will run whenever debounced query changes (typing pause) or adminWallet changes
+    fetchData(debouncedQ);
+  }, [debouncedQ, adminWallet, fetchData]);
+
+  // Manual "Enter" immediate search handler
+  const onKeyDownSearch = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      // Force immediate search with current query (no debounce)
+      setSearchNonce((n) => n + 1);
     }
-    run();
-    return () => {
-      alive = false;
-    };
-  }, [adminWallet, debouncedQ]);
+  };
+
+  // React to Enter-triggered manual search
+  useEffect(() => {
+    // Only run when manually bumped; use the "live" query (not debounced)
+    if (searchNonce > 0) fetchData(query);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchNonce]);
 
   /** Recompute totals on data change */
   const totals = useMemo(() => {
@@ -207,24 +227,21 @@ export default function UsersPage() {
   /** Helper: display formatter */
   const fmt2 = (n: number) => Number(n || 0).toFixed(2);
 
-  /** Refresh list - used by modal onSuccess callbacks */
-  async function refreshList() {
-    setLoading(true);
-    try {
-      const u = await listUsers({ q: debouncedQ, limit: 100 });
-      const rows: Row[] = (u.data || []).map((x) => ({
-        id: x.id,
-        address: x.wallet as Address,
-        rmCredit: Number(x.rm_credit || 0),
-        rmSpent: Number(x.rm_spent || 0),
-        oumgPurchased: Number(x.oumg_grams || 0),
-        note: x.note ?? undefined,
-        updated: x.updated_at || x.created_at || "",
-      }));
-      setUsers(rows);
-    } finally {
-      setLoading(false);
+  const fmtg = (n: number | null | undefined): string => {
+    if (n === 0 || n === null || n === undefined) {
+      return "0";
     }
+
+    if (Number.isInteger(n)) {
+      return n.toFixed(2);
+    }
+
+    return n.toFixed(6);
+  };
+
+  /** Refresh list - used by modal onSuccess callbacks (keeps current query) */
+  async function refreshList() {
+    await fetchData(debouncedQ);
   }
 
   /** Openers */
@@ -240,7 +257,7 @@ export default function UsersPage() {
     setMintOpen(true);
   }
 
-  const filtered = users; // already server-filtered by q; keep here for extensibility
+  const filtered = users; // already server-filtered by q
 
   return (
     <div className="space-y-6">
@@ -254,15 +271,40 @@ export default function UsersPage() {
         </div>
 
         <div className="flex items-center gap-3">
-          {/* Search */}
+          {/* Search box with clear + Enter immediate search */}
           <div className="hidden sm:block">
             <div className="relative">
               <input
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
+                onKeyDown={onKeyDownSearch}
                 placeholder="Search by address…"
-                className="h-10 w-[260px] rounded-lg border border-gray-200 bg-transparent px-3 text-sm text-gray-800 shadow-theme-xs placeholder:text-gray-400 focus:border-brand-300 focus:outline-hidden focus:ring-3 focus:ring-brand-500/10 dark:border-gray-800 dark:bg-gray-900 dark:text-white/90"
+                className="h-10 w-[300px] rounded-lg border border-gray-200 bg-transparent pl-9 pr-8 text-sm text-gray-800 shadow-theme-xs placeholder:text-gray-400 focus:border-brand-300 focus:outline-hidden focus:ring-3 focus:ring-brand-500/10 dark:border-gray-800 dark:bg-gray-900 dark:text-white/90"
               />
+              {/* Search icon (left) */}
+              <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3 text-gray-400">
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+                  <path fillRule="evenodd" d="M12.9 14.32a8 8 0 1 1 1.414-1.414l3.387 3.387a1 1 0 0 1-1.414 1.414l-3.387-3.387ZM14 8a6 6 0 1 0-12 0 6 6 0 0 0 12 0Z" clipRule="evenodd" />
+                </svg>
+              </div>
+              {/* Clear button (right) */}
+              {query && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setQuery("");
+                    // Also trigger immediate reload to show unfiltered list
+                    setSearchNonce((n) => n + 1);
+                  }}
+                  className="absolute inset-y-0 right-0 flex items-center pr-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200"
+                  aria-label="Clear search"
+                  title="Clear"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+                    <path fillRule="evenodd" d="M4.293 4.293a1 1 0 0 1 1.414 0L10 8.586l4.293-4.293a1 1 0 1 1 1.414 1.414L11.414 10l4.293 4.293a1 1 0 0 1-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 0 1-1.414-1.414L8.586 10 4.293 5.707a1 1 0 0 1 0-1.414Z" clipRule="evenodd" />
+                  </svg>
+                </button>
+              )}
             </div>
           </div>
 
@@ -293,7 +335,7 @@ export default function UsersPage() {
               <th className="px-6 py-3">RM Spent (MYR)</th>
               <th className="px-6 py-3">OUMG Purchased (g)</th>
               {/* <th className="px-6 py-3">Note</th> */}
-              <th className="px-6 py-3">Joined</th>
+              <th className="px-6 py-3">Updated</th>
               <th className="px-6 py-3">Action</th>
             </tr>
           </thead>
@@ -318,8 +360,8 @@ export default function UsersPage() {
                   </td>
                   <td className="px-6 py-4">RM {fmt2(u.rmCredit)}</td>
                   <td className="px-6 py-4">RM {fmt2(u.rmSpent)}</td>
-                  <td className="px-6 py-4">{u.oumgPurchased}</td>
-                   {/* <td className="px-6 py-4">{u.note || "—"}</td> */}
+                  <td className="px-6 py-4">{fmtg(u.oumgPurchased)}</td>
+                  {/* <td className="px-6 py-4">{u.note || "—"}</td> */}
                   <td className="px-6 py-4">
                     {u.updated ? new Date(u.updated).toLocaleString() : "—"}
                   </td>
@@ -356,9 +398,8 @@ export default function UsersPage() {
                   RM {fmt2(totals.rmSpent)}
                 </td>
                 <td className="px-6 py-4 font-semibold text-gray-700 dark:text-gray-300">
-                  {totals.oumgPurchased}
+                  {fmtg(totals.oumgPurchased)}
                 </td>
-                <td className="px-6 py-4">—</td>
                 <td className="px-6 py-4">—</td>
                 <td className="px-6 py-4">—</td>
               </tr>
