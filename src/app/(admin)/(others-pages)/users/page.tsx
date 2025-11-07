@@ -1,21 +1,30 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 "use client";
 
-// app/(admin)/users/page.tsx
-// Users admin page wired to backend admin endpoints.
-// - Server-side search by wallet (with debounce + Enter immediate search)
-// - Keeps existing pricing + modals + totals behavior
-// English-only comments; UI text stays as in your code.
+/**
+ * app/(admin)/users/page.tsx
+ *
+ * Users admin page wired to backend admin endpoints.
+ * Improvements:
+ * - Fetch waits until adminWallet is resolved (prevents first-frame "No users found.")
+ * - Debounced search + Enter immediate search
+ * - Latest-response-wins: drop stale responses by requestId
+ * - Never clear list on error; keep previous data
+ * - "No users found." only shown after first real fetch completes
+ *
+ * English-only comments; UI text stays as in your code.
+ */
 
-import React, { useEffect, useMemo, useState, useCallback } from "react";
+import React, {
+  useEffect,
+  useMemo,
+  useState,
+  useCallback,
+  useRef,
+} from "react";
 import type { Address, UserWithBalances, PriceSnapshot } from "@/lib/api";
-import {
-  getAdminWallet,
-  listUsers,
-  getPriceSnapshot,
-} from "@/lib/api";
+import { getAdminWallet, listUsers, getPriceSnapshot } from "@/lib/api";
 
-// Modals (split components)
 import AddUserModal from "./Modals/AddUserModal";
 import CreditModal from "./Modals/CreditModal";
 import MintModal from "./Modals/MintModal";
@@ -63,7 +72,12 @@ function AddressDisplay({ address }: { address: Address }) {
       >
         {copied ? (
           // Checkmark icon
-          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4 text-green-500">
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            viewBox="0 0 20 20"
+            fill="currentColor"
+            className="w-4 h-4 text-green-500"
+          >
             <path
               fillRule="evenodd"
               d="M16.704 4.153a.75.75 0 0 1 .143 1.052l-8 10.5a.75.75 0 0 1-1.127.075l-4.5-4.5a.75.75 0 0 1 1.06-1.06l3.894 3.893 7.48-9.817a.75.75 0 0 1 1.05-.143Z"
@@ -72,7 +86,12 @@ function AddressDisplay({ address }: { address: Address }) {
           </svg>
         ) : (
           // Copy icon
-          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200">
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            viewBox="0 0 20 20"
+            fill="currentColor"
+            className="w-4 h-4 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
+          >
             <path d="M7 3.5A1.5 1.5 0 0 1 8.5 2h3.879a1.5 1.5 0 0 1 1.06.44l3.122 3.12A1.5 1.5 0 0 1 17 6.622V16.5a1.5 1.5 0 0 1-1.5 1.5h-7A1.5 1.5 0 0 1 7 16.5v-13Z" />
             <path d="M4.5 6A1.5 1.5 0 0 0 3 7.5v10A1.5 1.5 0 0 0 4.5 19h7a1.5 1.5 0 0 0 1.5-1.5v-1.333a.75.75 0 0 1-1.5 0V17.5a.5.5 0 0 1-.5-.5h-7a.5.5 0 0 1-.5-.5v-10a.5.5 0 0 1 .5-.5h1.333a.75.75 0 0 1 0 1.5H4.5Z" />
           </svg>
@@ -119,47 +138,70 @@ function useDebounced<T>(value: T, ms: number) {
 }
 
 export default function UsersPage() {
+  // --- Admin wallet gate ---
   const [adminWallet, setAdminWalletState] = useState<string | null>(null);
+  const [adminReady, setAdminReady] = useState(false); // true after we attempt to read from storage once
 
-  // Server data
+  // --- Server data ---
   const [users, setUsers] = useState<Row[]>([]);
   const [price, setPrice] = useState<PriceSnapshot | null>(null);
 
-  // UI state
+  // --- UI state ---
   const [loading, setLoading] = useState(true);
   const [errorText, setErrorText] = useState<string | null>(null);
+  const [hasFetchedOnce, setHasFetchedOnce] = useState(false); // only show "No users found." after true
 
-  // Search
+  // --- Search ---
   const [query, setQuery] = useState("");
   const debouncedQ = useDebounced(query, 250);
 
-  // A manual bump to force immediate search when pressing Enter.
+  // Immediate search nonce (Enter key)
   const [searchNonce, setSearchNonce] = useState(0);
 
-  // Modal states
+  // --- Modals ---
   const [addOpen, setAddOpen] = useState(false);
   const [creditOpen, setCreditOpen] = useState(false);
   const [mintOpen, setMintOpen] = useState(false);
   const [selected, setSelected] = useState<Row | null>(null);
 
-  // Read admin wallet from localStorage (client)
+  // --- latest-response-wins ---
+  const reqSeq = useRef(0); // increases each fetch
+  const lastAppliedSeq = useRef(0); // last seq that actually mutated state
+
+  // Load admin wallet once (client-only)
   useEffect(() => {
-    setAdminWalletState(getAdminWallet());
+    const w = getAdminWallet(); // sync read from localStorage in your lib
+    setAdminWalletState(w);
+    setAdminReady(true);
   }, []);
 
   /** Fetch function reused by both debounced and immediate searches */
   const fetchData = useCallback(
-    async (qForFetch: string | undefined) => {
-      setLoading(true);
+    async (qForFetch: string | undefined, options?: { immediate?: boolean }) => {
+      // If admin not ready yet, don't start; prevents first-frame "No users"
+      if (!adminReady) return;
+
+      // Only fetch users when adminWallet exists; price can still be fetched.
+      const seq = ++reqSeq.current;
+      if (options?.immediate) {
+        setLoading(true);
+      } else if (!hasFetchedOnce) {
+        // During first load keep skeleton; avoid jitter
+        setLoading(true);
+      }
+
       setErrorText(null);
+
       try {
-        // Fetch current price (best effort) and user list (requires admin wallet)
         const [p, u] = await Promise.all([
           getPriceSnapshot().catch(() => ({} as PriceSnapshot)),
           adminWallet
             ? listUsers({ q: qForFetch ?? "", limit: 100 })
             : Promise.resolve({ data: [] as UserWithBalances[] }),
         ]);
+
+        // Drop stale response
+        if (seq < lastAppliedSeq.current) return;
 
         setPrice(p || null);
 
@@ -172,40 +214,43 @@ export default function UsersPage() {
           note: (x as any).note ?? undefined,
           updated: (x as any).updated_at || (x as any).created_at || "",
         }));
+
         setUsers(rows);
+        lastAppliedSeq.current = seq;
       } catch (e) {
+        // Keep previous users on error; show error banner only
         const msg = e instanceof Error ? e.message : "Failed to load users";
         setErrorText(msg);
       } finally {
         setLoading(false);
+        setHasFetchedOnce(true);
       }
     },
-    [adminWallet]
+    [adminWallet, adminReady, hasFetchedOnce]
   );
 
-  // Debounced auto-search
+  // Debounced auto-search (runs only after adminReady)
   useEffect(() => {
-    // Will run whenever debounced query changes (typing pause) or adminWallet changes
+    if (!adminReady) return;
     fetchData(debouncedQ);
-  }, [debouncedQ, adminWallet, fetchData]);
+  }, [debouncedQ, adminReady, fetchData]);
 
   // Manual "Enter" immediate search handler
   const onKeyDownSearch = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === "Enter") {
       e.preventDefault();
-      // Force immediate search with current query (no debounce)
       setSearchNonce((n) => n + 1);
     }
   };
 
-  // React to Enter-triggered manual search
+  // React to Enter-triggered manual search (immediate)
   useEffect(() => {
-    // Only run when manually bumped; use the "live" query (not debounced)
-    if (searchNonce > 0) fetchData(query);
+    if (!adminReady) return;
+    if (searchNonce > 0) fetchData(query, { immediate: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchNonce]);
+  }, [searchNonce, adminReady]);
 
-  /** Recompute totals on data change */
+  /** Totals */
   const totals = useMemo(() => {
     return users.reduce(
       (acc, u) => {
@@ -214,7 +259,7 @@ export default function UsersPage() {
         acc.oumgPurchased += u.oumgPurchased;
         return acc;
       },
-      { rmCredit: 0, rmSpent: 0, oumgPurchased: 0 },
+      { rmCredit: 0, rmSpent: 0, oumgPurchased: 0 }
     );
   }, [users]);
 
@@ -225,24 +270,18 @@ export default function UsersPage() {
     price?.price_myr_per_g ??
     FALLBACK_PRICE_MYR_PER_G;
 
-  /** Helper: display formatter */
+  /** Helpers */
   const fmt2 = (n: number) => Number(n || 0).toFixed(2);
 
   const fmtg = (n: number | null | undefined): string => {
-    if (n === 0 || n === null || n === undefined) {
-      return "0";
-    }
-
-    if (Number.isInteger(n)) {
-      return n.toFixed(2);
-    }
-
-    return n.toFixed(6);
+    if (n === 0 || n === null || n === undefined) return "0";
+    if (Number.isInteger(n)) return n.toFixed(2);
+    return Number(n).toFixed(6);
   };
 
-  /** Refresh list - used by modal onSuccess callbacks (keeps current query) */
+  /** Refresh list - for modal success callbacks (keeps current query) */
   async function refreshList() {
-    await fetchData(debouncedQ);
+    await fetchData(debouncedQ, { immediate: true });
   }
 
   /** Openers */
@@ -258,16 +297,24 @@ export default function UsersPage() {
     setMintOpen(true);
   }
 
-  const filtered = users; // already server-filtered by q
+  // Already server-filtered by q
+  const filtered = users;
+
+  // Decide empty-state visibility:
+  const showEmpty =
+    !loading && hasFetchedOnce && adminReady && filtered.length === 0;
 
   return (
     <div className="space-y-6">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-xl font-semibold text-gray-800 dark:text-gray-100">Users</h1>
+          <h1 className="text-xl font-semibold text-gray-800 dark:text-gray-100">
+            Users
+          </h1>
           <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-            Manage whitelisted users, preload RM credits, and mint OUMG (connected to backend).
+            Manage whitelisted users, preload RM credits, and mint OUMG
+            (connected to backend).
           </p>
         </div>
 
@@ -284,8 +331,17 @@ export default function UsersPage() {
               />
               {/* Search icon (left) */}
               <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3 text-gray-400">
-                <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
-                  <path fillRule="evenodd" d="M12.9 14.32a8 8 0 1 1 1.414-1.414l3.387 3.387a1 1 0 0 1-1.414 1.414l-3.387-3.387ZM14 8a6 6 0 1 0-12 0 6 6 0 0 0 12 0Z" clipRule="evenodd" />
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  className="h-4 w-4"
+                  viewBox="0 0 20 20"
+                  fill="currentColor"
+                >
+                  <path
+                    fillRule="evenodd"
+                    d="M12.9 14.32a8 8 0 1 1 1.414-1.414l3.387 3.387a1 1 0 0 1-1.414 1.414l-3.387-3.387ZM14 8a6 6 0 1 0-12 0 6 6 0 0 0 12 0Z"
+                    clipRule="evenodd"
+                  />
                 </svg>
               </div>
               {/* Clear button (right) */}
@@ -294,15 +350,23 @@ export default function UsersPage() {
                   type="button"
                   onClick={() => {
                     setQuery("");
-                    // Also trigger immediate reload to show unfiltered list
-                    setSearchNonce((n) => n + 1);
+                    setSearchNonce((n) => n + 1); // immediate reload unfiltered
                   }}
                   className="absolute inset-y-0 right-0 flex items-center pr-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200"
                   aria-label="Clear search"
                   title="Clear"
                 >
-                  <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
-                    <path fillRule="evenodd" d="M4.293 4.293a1 1 0 0 1 1.414 0L10 8.586l4.293-4.293a1 1 0 1 1 1.414 1.414L11.414 10l4.293 4.293a1 1 0 0 1-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 0 1-1.414-1.414L8.586 10 4.293 5.707a1 1 0 0 1 0-1.414Z" clipRule="evenodd" />
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    className="h-4 w-4"
+                    viewBox="0 0 20 20"
+                    fill="currentColor"
+                  >
+                    <path
+                      fillRule="evenodd"
+                      d="M4.293 4.293a1 1 0 0 1 1.414 0L10 8.586l4.293-4.293a1 1 0 1 1 1.414 1.414L11.414 10l4.293 4.293a1 1 0 0 1-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 0 1-1.414-1.414L8.586 10 4.293 5.707a1 1 0 0 1 0-1.414Z"
+                      clipRule="evenodd"
+                    />
                   </svg>
                 </button>
               )}
@@ -343,19 +407,28 @@ export default function UsersPage() {
           <tbody>
             {loading ? (
               <tr>
-                <td className="px-6 py-8 text-center text-gray-500 dark:text-gray-400" colSpan={7}>
+                <td
+                  className="px-6 py-8 text-center text-gray-500 dark:text-gray-400"
+                  colSpan={7}
+                >
                   Loading…
                 </td>
               </tr>
-            ) : filtered.length === 0 ? (
+            ) : showEmpty ? (
               <tr>
-                <td className="px-6 py-8 text-center text-gray-500 dark:text-gray-400" colSpan={7}>
+                <td
+                  className="px-6 py-8 text-center text-gray-500 dark:text-gray-400"
+                  colSpan={7}
+                >
                   No users found.
                 </td>
               </tr>
             ) : (
               filtered.map((u) => (
-                <tr key={u.id ?? u.address} className="border-b border-gray-200 dark:border-gray-800">
+                <tr
+                  key={u.id ?? u.address}
+                  className="border-b border-gray-200 dark:border-gray-800"
+                >
                   <td className="px-6 py-4 text-gray-900 dark:text-white">
                     <AddressDisplay address={u.address} />
                   </td>
@@ -389,9 +462,11 @@ export default function UsersPage() {
             )}
 
             {/* Totals row */}
-            {!loading && (
+            {!loading && !showEmpty && (
               <tr className="border-t border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-white/5">
-                <td className="px-6 py-4 font-semibold text-gray-700 dark:text-gray-300">Totals</td>
+                <td className="px-6 py-4 font-semibold text-gray-700 dark:text-gray-300">
+                  Totals
+                </td>
                 <td className="px-6 py-4 font-semibold text-gray-700 dark:text-gray-300">
                   RM {fmt2(totals.rmCredit)}
                 </td>

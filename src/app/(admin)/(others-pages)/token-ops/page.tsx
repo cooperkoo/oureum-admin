@@ -12,6 +12,8 @@ import {
   type TokenOpsAction,
 } from "@/lib/apiTokenOps";
 
+const PAGE_SIZE = 20;
+
 /** Shorten Ethereum address for UI */
 function shortenAddress(addr: string) {
   if (!addr) return "";
@@ -35,9 +37,32 @@ function getAdminWalletLocal(): string | null {
   return /^0x[a-f0-9]{40}$/.test(legacy) ? legacy : null;
 }
 
-/** Format "details" column from various possible backend shapes */
+/** For "Type" column: audits.type or infer MINT_BURN for token_ops rows */
+function getType(row: any): string {
+  if (row?.type) return String(row.type);
+  if (row?.op_type && (row?.wallet_address || row?.grams != null)) return "MINT_BURN";
+  return "TOKEN_OPS";
+}
+
+/** For "Action" column: audits.action or token_ops.op_type */
+function getAction(row: any): string {
+  const a = row?.action ?? row?.op_type ?? "";
+  return String(a).toUpperCase();
+}
+
+/** For "Operator" column: audits.operator / legacy admin_wallet / token_ops.wallet_address */
+function getOperator(row: any): string {
+  return row?.operator ?? row?.admin_wallet ?? row?.wallet_address ?? "";
+}
+
+/** For "Timestamp" column */
+function getCreatedAt(row: any): string {
+  return row?.created_at ?? row?.createdAt ?? "";
+}
+
+/** Details: prefer audits.detail; else fallback to token_ops fields */
 function formatDetails(row: any): string {
-  // New audits shape: detail (jsonb)
+  // audits.detail (jsonb or string)
   if (row?.detail != null) {
     if (typeof row.detail === "string") return row.detail;
     try {
@@ -48,63 +73,40 @@ function formatDetails(row: any): string {
       if (d.unit_price_myr_per_g != null) parts.push(`price=${d.unit_price_myr_per_g}`);
       if (d.tx_hash) parts.push(`tx=${String(d.tx_hash).slice(0, 10)}…`);
       if (d.note) parts.push(`note=${d.note}`);
-      if (parts.length) return parts.join(" · ");
-      return JSON.stringify(d);
+      return parts.length ? parts.join(" · ") : JSON.stringify(d);
     } catch {
       return String(row.detail);
     }
   }
 
-  // Legacy token_ops_audit shape: tx_hash + note
-  const legacyParts: string[] = [];
-  if (row?.tx_hash) legacyParts.push(`tx=${String(row.tx_hash).slice(0, 10)}…`);
-  if (row?.note) legacyParts.push(`note=${row.note}`);
-  if (legacyParts.length) return legacyParts.join(" · ");
-
-  return "";
-}
-
-/** For "Type" column: prefer row.type else fallback to TOKEN_OPS */
-function getType(row: any): string {
-  return row?.type ? String(row.type) : "TOKEN_OPS";
-}
-
-/** For "Action" column: prefer row.action, uppercase */
-function getAction(row: any): string {
-  return row?.action ? String(row.action).toUpperCase() : "";
-}
-
-/** For "Operator" column: audits.operator or legacy admin_wallet */
-function getOperator(row: any): string {
-  return row?.operator ?? row?.admin_wallet ?? "";
-}
-
-/** For "Timestamp" column */
-function getCreatedAt(row: any): string {
-  return row?.created_at ?? row?.createdAt ?? "";
+  // token_ops raw fields fallback
+  const parts: string[] = [];
+  if (row?.grams != null) parts.push(`grams=${row.grams}`);
+  if (row?.tx_hash) parts.push(`tx=${String(row.tx_hash).slice(0, 10)}…`);
+  if (row?.note) parts.push(`note=${row.note}`);
+  return parts.join(" · ") || "";
 }
 
 export default function TokenOpsPage() {
   // Session/admin
-  const [mounted, setMounted] = useState(false);
   const [adminWallet, setAdminWallet] = useState<string | null>(null);
 
   // Contract status
   const [statusLoading, setStatusLoading] = useState(true);
   const [isPaused, setIsPaused] = useState(false);
-
-  // Button loading state
   const [actionLoading, setActionLoading] = useState<"pause" | "resume" | null>(null);
 
-  // Logs
+  // Logs + pagination
   const [logsLoading, setLogsLoading] = useState(true);
-  const [logs, setLogs] = useState<any[]>([]); // accept both audits/legacy shapes
+  const [logs, setLogs] = useState<any[]>([]);
+  const [page, setPage] = useState(0); // 0-based
+  const [hasNext, setHasNext] = useState(false);
 
   // Error banner
   const [errorText, setErrorText] = useState<string | null>(null);
 
+  // bootstrap admin wallet
   useEffect(() => {
-    setMounted(true);
     setAdminWallet(getAdminWalletLocal());
   }, []);
 
@@ -130,37 +132,36 @@ export default function TokenOpsPage() {
     };
   }, []);
 
-  // Refresh logs (for initial load and after actions)
-  async function refreshLogs() {
-    setLogsLoading(true);
-    try {
-      const res = await getTokenOpsLogs({ limit: 100, offset: 0 });
-      setLogs((res as any)?.data || []);
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : "Failed to load logs";
-      setErrorText(msg);
-    } finally {
-      setLogsLoading(false);
-    }
-  }
-
-  // Initial logs load
+  // Fetch logs for current page
   useEffect(() => {
     let alive = true;
     (async () => {
-      if (!alive) return;
-      await refreshLogs();
+      setLogsLoading(true);
+      setErrorText(null);
+      try {
+        const offset = page * PAGE_SIZE;
+        // Do NOT pass action filter here, we want both TOKEN_OPS and MINT_BURN back.
+        const res = await getTokenOpsLogs({ limit: PAGE_SIZE, offset });
+        if (!alive) return;
+        const data = (res as any)?.data ?? [];
+        setLogs(data);
+        setHasNext(data.length === PAGE_SIZE); // naive next-page guard when API has no total
+      } catch (e) {
+        if (!alive) return;
+        const msg = e instanceof Error ? e.message : "Failed to load logs";
+        setErrorText(msg);
+        setLogs([]);
+        setHasNext(false);
+      } finally {
+        if (alive) setLogsLoading(false);
+      }
     })();
     return () => {
       alive = false;
     };
-  }, []);
+  }, [page]);
 
-  // Filter to TOKEN_OPS only if backend returns mixed types
-  const tokenOpsLogs = useMemo(() => {
-    return (logs || []).filter((row) => getType(row) === "TOKEN_OPS");
-  }, [logs]);
-
+  // Pause/Resume handler
   async function handleTogglePause() {
     if (!adminWallet) {
       alert("Please connect an admin wallet first.");
@@ -169,23 +170,27 @@ export default function TokenOpsPage() {
     setErrorText(null);
     const goingToPause = !isPaused;
     setActionLoading(goingToPause ? "pause" : "resume");
-
     try {
-      const action: TokenOpsAction = isPaused
-        ? await resumeContract()
-        : await pauseContract();
-
-      // Update status from action result
+      const action: TokenOpsAction = isPaused ? await resumeContract() : await pauseContract();
       setIsPaused(action.action === "pause");
-
-      // IMPORTANT: do NOT append a fake row; re-fetch from DB to get real id
-      await refreshLogs();
+      // refresh current page logs after action
+      const res = await getTokenOpsLogs({ limit: PAGE_SIZE, offset: page * PAGE_SIZE });
+      setLogs((res as any)?.data || []);
+      setHasNext(((res as any)?.data || []).length === PAGE_SIZE);
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Pause/Resume request failed";
       setErrorText(msg);
     } finally {
       setActionLoading(null);
     }
+  }
+
+  // Pagination controls
+  function goPrev() {
+    if (page > 0) setPage((p) => p - 1);
+  }
+  function goNext() {
+    if (hasNext) setPage((p) => p + 1);
   }
 
   const actionBtnLabel = statusLoading
@@ -213,7 +218,7 @@ export default function TokenOpsPage() {
             Token Ops
           </h1>
           <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-            Manage contract state and view operation logs.
+            Manage contract state and view operation logs (includes pause/resume and mint/burn).
           </p>
         </div>
       </div>
@@ -269,13 +274,17 @@ export default function TokenOpsPage() {
         </div>
       </div>
 
-      {/* Logs table: Type / Action / Operator / Details / Timestamp */}
+      {/* Logs table */}
       <div className="rounded-2xl border border-gray-200 bg-white shadow-theme-lg dark:border-gray-800 dark:bg-gray-900">
         <div className="px-6 py-4 border-b border-gray-200 dark:border-gray-800">
           <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-300">
             Recent Token Ops
           </h2>
+          <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+            Showing mixed records from contract operations (PAUSE/RESUME) and mint/burn events.
+          </p>
         </div>
+
         <div className="overflow-x-auto">
           <table className="w-full text-left text-sm text-gray-600 dark:text-gray-300">
             <thead className="text-xs uppercase text-gray-500 dark:text-gray-400 border-b border-gray-200 dark:border-gray-800">
@@ -294,14 +303,14 @@ export default function TokenOpsPage() {
                     Loading…
                   </td>
                 </tr>
-              ) : tokenOpsLogs.length === 0 ? (
+              ) : logs.length === 0 ? (
                 <tr>
                   <td colSpan={5} className="px-6 py-8 text-center text-gray-400">
                     No logs yet.
                   </td>
                 </tr>
               ) : (
-                tokenOpsLogs.map((row: any, idx: number) => {
+                logs.map((row: any, idx: number) => {
                   const id = row?.id != null ? String(row.id) : `row-${idx}`;
                   const type = getType(row);
                   const action = getAction(row);
@@ -336,6 +345,27 @@ export default function TokenOpsPage() {
               )}
             </tbody>
           </table>
+        </div>
+
+        {/* Pagination */}
+        <div className="flex items-center justify-between p-5">
+          <button
+            onClick={goPrev}
+            disabled={logsLoading || page === 0}
+            className="inline-flex items-center rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-sm font-medium text-gray-700 shadow-theme-xs hover:bg-gray-50 disabled:opacity-50 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-200"
+          >
+            Previous
+          </button>
+          <div className="text-xs text-gray-500 dark:text-gray-400">
+            Page {page + 1}
+          </div>
+          <button
+            onClick={goNext}
+            disabled={logsLoading || !hasNext}
+            className="inline-flex items-center rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-sm font-medium text-gray-700 shadow-theme-xs hover:bg-gray-50 disabled:opacity-50 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-200"
+          >
+            Next
+          </button>
         </div>
       </div>
     </div>

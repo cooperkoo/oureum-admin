@@ -5,7 +5,7 @@ import Image from "next/image";
 import { usePathname } from "next/navigation";
 import { useSidebar } from "../context/SidebarContext";
 import {
-  // BoxCubeIcon,
+  BoxCubeIcon,
   // CalenderIcon,
   ChevronDownIcon,
   GridIcon,
@@ -31,6 +31,7 @@ const navItems: NavItem[] = [
   //{ icon: <ListIcon />, name: "Orders", path: "/orders" },
   { icon: <UserCircleIcon />, name: "Users", path: "/users" },
   { icon: <PieChartIcon />, name: "Pricing", path: "/pricing" },
+  { icon: <BoxCubeIcon />, name: "Gold Ledger", path: "/gold-ledger" },
   { icon: <PlugInIcon />, name: "Token Ops", path: "/token-ops" },
   { icon: <UserCircleIcon />, name: "Settings", path: "/settings" },
 ];
