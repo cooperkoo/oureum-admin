@@ -22,7 +22,7 @@ type MintState = "idle" | "processing" | "success" | "error";
 type BurnState = "idle" | "processing" | "success" | "error";
 type TabKey = "buy" | "burn";
 
-const EXPLORER_TX_BASE = "https://oureum-testnet.tryethernal.com/transaction/";
+const EXPLORER_TX_BASE = "https://explorer-testnet.oureum.com/transaction/";
 
 // Allow override from env (fallback to your test address)
 const OUMG_ADDRESS =

@@ -65,7 +65,7 @@ type MintModalProps = {
 };
 
 // Oureum explorer base URL (no chain.ts import needed)
-const EXPLORER_BASE = "https://oureum-testnet.tryethernal.com";
+const EXPLORER_BASE = "https://explorer-testnet.oureum.com";
 
 /** ----------------------------------------------------------------
  * MintModal (Admin)
