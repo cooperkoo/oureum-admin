@@ -31,7 +31,7 @@ export default function SignInForm() {
   // If already logged in, redirect to Dashboard
   React.useEffect(() => {
     const { isAdmin } = readAdminSession();
-    if (isAdmin) router.replace("/");
+    if (isAdmin) router.replace("/admin/");
   }, [router]);
 
   const handleSignIn = async () => {
@@ -64,7 +64,7 @@ export default function SignInForm() {
         saveAdminSession(normalized);
         setAdminWallet(normalized);
 
-        router.replace("/"); // success
+        router.replace("/admin/"); // success
       } else {
         setError("This wallet is not in the admin whitelist.");
         // Ensure we remain logged out

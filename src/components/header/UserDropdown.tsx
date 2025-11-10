@@ -67,11 +67,11 @@ export default function UserDropdown() {
       setIsOpen(false);
       clearAdminSession();     // 1) clear local session
       try { disconnect(); } catch { } // 2) disconnect wagmi connectors (best-effort)
-      router.replace("/signin"); // 3) go to sign-in
+      router.replace("/admin/signin"); // 3) go to sign-in
       router.refresh();          // 4) ensure re-render
       setTimeout(() => {
         if (typeof window !== "undefined" && window.location.pathname !== "/signin") {
-          window.location.replace("/signin");
+          window.location.replace("/admin/signin");
         }
       }, 0);
     } catch {

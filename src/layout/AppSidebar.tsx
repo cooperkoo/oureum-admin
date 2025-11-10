@@ -27,13 +27,13 @@ type NavItem = {
 };
 
 const navItems: NavItem[] = [
-  { icon: <GridIcon />, name: "Dashboard", path: "/" },
+  { icon: <GridIcon />, name: "Dashboard", path: "/admin" },
   //{ icon: <ListIcon />, name: "Orders", path: "/orders" },
-  { icon: <UserCircleIcon />, name: "Users", path: "/users" },
-  { icon: <PieChartIcon />, name: "Pricing", path: "/pricing" },
-  { icon: <BoxCubeIcon />, name: "Gold Ledger", path: "/gold-ledger" },
-  { icon: <PlugInIcon />, name: "Token Ops", path: "/token-ops" },
-  { icon: <UserCircleIcon />, name: "Settings", path: "/settings" },
+  { icon: <UserCircleIcon />, name: "Users", path: "/admin/users" },
+  { icon: <PieChartIcon />, name: "Pricing", path: "/admin/pricing" },
+  { icon: <BoxCubeIcon />, name: "Gold Ledger", path: "/admin/gold-ledger" },
+  { icon: <PlugInIcon />, name: "Token Ops", path: "/admin/token-ops" },
+  { icon: <UserCircleIcon />, name: "Settings", path: "/admin/settings" },
 ];
 
 const othersItems: NavItem[] = [];

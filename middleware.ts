@@ -31,7 +31,7 @@ export function middleware(req: NextRequest) {
 
   // Public routes that should always pass through
   const publicPaths = new Set<string>([
-    "/signin",
+    "/admin/signin",
   ]);
 
   const isApi = path.startsWith("/api/");
@@ -41,8 +41,8 @@ export function middleware(req: NextRequest) {
   if (isApi) return NextResponse.next();
 
   // If signed in and heading to /signin, just show dashboard
-  if (isAdmin && path === "/signin") {
-    url.pathname = "/";
+  if (isAdmin && path === "/admin/signin") {
+    url.pathname = "/admin";
     return NextResponse.rewrite(url);
   }
 
@@ -52,13 +52,13 @@ export function middleware(req: NextRequest) {
   if (!isAdmin) {
     if (isAdminHost) {
       if (!isPublic) {
-        url.pathname = "/signin";
+        url.pathname = "/admin/signin";
         return NextResponse.rewrite(url);
       }
     } else {
       // Root domain rule: land on /signin instead of dashboard flash
-      if (path === "/") {
-        url.pathname = "/signin";
+      if (path === "/admin") {
+        url.pathname = "/admin/signin";
         return NextResponse.rewrite(url);
       }
     }

@@ -25,7 +25,7 @@ export default function Home() {
     if (isAdmin) {
       // Already logged in → redirect to dashboard.
       // If your dashboard is located at /admin, change to router.replace("/admin").
-      router.replace("/");
+      router.replace("/admin");
     } else {
       // No session → allow page to show login form.
       setChecked(true);

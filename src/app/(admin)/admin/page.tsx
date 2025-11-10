@@ -14,7 +14,7 @@ export const metadata: Metadata = {
 export default async function Page() {
   const isAdmin = await isAdminRequest();
   if (!isAdmin) {
-    redirect("/signin");
+    redirect("/admin/signin");
   }
   return <DashboardClient />;
 }

@@ -24,12 +24,12 @@ export default function AdminGuard({ children }: { children: React.ReactNode }) 
     } else {
       setAllowed(false);
       setReady(true);
-      router.replace("/signin");
+      router.replace("/admin/signin");
       router.refresh();
       // Last-resort hard redirect (covers rare caching edge-cases)
       setTimeout(() => {
-        if (window.location.pathname !== "/signin") {
-          window.location.replace("/signin");
+        if (window.location.pathname !== "/admin/signin") {
+          window.location.replace("/admin/signin");
         }
       }, 0);
     }

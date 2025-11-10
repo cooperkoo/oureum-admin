@@ -58,14 +58,6 @@ export default function UserLoginPage() {
           >
             {loading ? "Connecting…" : "Connect MetaMask"}
           </button>
-
-          <button
-            onClick={onGuest}
-            disabled={loading}
-            className="h-11 w-full rounded-lg border border-gray-200 bg-white text-sm font-semibold text-gray-700 shadow-theme-xs hover:bg-gray-50 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-200 dark:hover:bg-white/5"
-          >
-            Continue as Guest (preview)
-          </button>
         </div>
 
         <p className="mt-6 text-xs text-gray-500 dark:text-gray-400">
