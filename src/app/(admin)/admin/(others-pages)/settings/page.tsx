@@ -58,7 +58,7 @@ export default function SettingsPage() {
           <div>
             <dt className="text-gray-500 dark:text-gray-400">Network</dt>
             <dd className="font-medium text-gray-800 dark:text-gray-100">
-              Oureum Testnet (L1)
+              Oureum Testnet (L2)
             </dd>
           </div>
           <div className="sm:col-span-2">
